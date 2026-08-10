@@ -30,6 +30,10 @@ builder.Services.Configure<JsonOptions>(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
     options.SerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+
+    // Untrusted world names and generated narration are data. The HTML-safe encoder keeps them
+    // inert even if a response is ever embedded somewhere other than a JSON parser.
+    options.SerializerOptions.Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default;
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
     options.SerializerOptions.Converters.Add(new WorldIdJsonConverter());
     options.SerializerOptions.Converters.Add(new WardenIdJsonConverter());
