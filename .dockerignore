@@ -1,0 +1,15 @@
+# Keep build contexts small and free of local state or build output.
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.vite/
+**/TestResults/
+.git/
+.github/
+.vs/
+.idea/
+infra/
+tests/
+**/.cosmorph-local/
+**/*.user
