@@ -1,0 +1,136 @@
+name: deploy
+
+# Deployment is manual and environment-gated. Pull requests never deploy, so an untrusted fork
+# cannot reach Azure. Authentication uses GitHub OIDC workload identity federation; no Azure
+# credential is ever stored in this repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environmentName:
+        description: Environment name (for example dev or prod)
+        required: true
+        default: dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environmentName }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test --configuration Release
+
+  infrastructure:
+    name: Deploy infrastructure
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environmentName }}
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      registryLoginServer: ${{ steps.deploy.outputs.registryLoginServer }}
+      tickJobName: ${{ steps.deploy.outputs.tickJobName }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: What-if
+        run: |
+          az deployment group what-if \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --template-file infra/main.bicep \
+            --parameters environmentName="${{ inputs.environmentName }}" \
+                         modelEndpoint="${{ vars.COSMORPH_MODEL_ENDPOINT }}" \
+                         modelDeployment="${{ vars.COSMORPH_MODEL_DEPLOYMENT }}" \
+                         modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}"
+      - name: Deploy
+        id: deploy
+        run: |
+          az deployment group create \
+            --name "cosmorph-${{ github.run_id }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --template-file infra/main.bicep \
+            --parameters environmentName="${{ inputs.environmentName }}" \
+                         modelEndpoint="${{ vars.COSMORPH_MODEL_ENDPOINT }}" \
+                         modelDeployment="${{ vars.COSMORPH_MODEL_DEPLOYMENT }}" \
+                         modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
+                         useRegistryImages=true \
+            --query properties.outputs -o json > outputs.json
+          echo "registryLoginServer=$(jq -r '.registryLoginServer.value' outputs.json)" >> "$GITHUB_OUTPUT"
+          echo "tickJobName=$(jq -r '.tickJobName.value' outputs.json)" >> "$GITHUB_OUTPUT"
+      - name: Assert Storage hardening
+        run: |
+          account=$(az storage account list --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" --query "[0].name" -o tsv)
+          az storage account show --name "$account" --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query "{shared:allowSharedKeyAccess, publicBlob:allowBlobPublicAccess, network:publicNetworkAccess}" -o json > storage.json
+          jq -e '.shared == false and .publicBlob == false and .network == "Disabled"' storage.json
+          az network private-endpoint list --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --query "[?contains(name, 'blob-pe')] | length(@)" -o tsv | grep -qv '^0$'
+
+  images:
+    name: Build and publish images
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environmentName }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build images in the registry
+        env:
+          REGISTRY: ${{ needs.infrastructure.outputs.registryLoginServer }}
+        run: |
+          registry="${REGISTRY%%.*}"
+          az acr build --registry "$registry" --image "cosmorph-api:${{ github.sha }}" --file src/Cosmorph.Api/Dockerfile .
+          az acr build --registry "$registry" --image "cosmorph-tickjob:${{ github.sha }}" --file src/Cosmorph.TickJob/Dockerfile .
+
+  applications:
+    name: Roll out application images
+    needs: [infrastructure, images]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environmentName }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Update the web/API container app
+        env:
+          REGISTRY: ${{ needs.infrastructure.outputs.registryLoginServer }}
+        run: |
+          az containerapp update \
+            --name "cosmorph-${{ inputs.environmentName }}-web" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$REGISTRY/cosmorph-api:${{ github.sha }}"
+      - name: Update the tick job
+        env:
+          REGISTRY: ${{ needs.infrastructure.outputs.registryLoginServer }}
+        run: |
+          az containerapp job update \
+            --name "${{ needs.infrastructure.outputs.tickJobName }}" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --image "$REGISTRY/cosmorph-tickjob:${{ github.sha }}"

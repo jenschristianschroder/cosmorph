@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Cosmorph.Api/Cosmorph.Api.csproj" />
+    <Project Path="src/Cosmorph.Application/Cosmorph.Application.csproj" />
+    <Project Path="src/Cosmorph.Domain/Cosmorph.Domain.csproj" />
+    <Project Path="src/Cosmorph.Infrastructure/Cosmorph.Infrastructure.csproj" />
+    <Project Path="src/Cosmorph.TickJob/Cosmorph.TickJob.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Cosmorph.Api.Tests/Cosmorph.Api.Tests.csproj" />
+    <Project Path="tests/Cosmorph.Application.Tests/Cosmorph.Application.Tests.csproj" />
+    <Project Path="tests/Cosmorph.Domain.Tests/Cosmorph.Domain.Tests.csproj" />
+    <Project Path="tests/Cosmorph.Infrastructure.Tests/Cosmorph.Infrastructure.Tests.csproj" />
+  </Folder>
+</Solution>
