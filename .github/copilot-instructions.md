@@ -101,4 +101,6 @@ These are non-negotiable:
 
 ## Roadmap and future development
 
+- For engagement, onboarding, retention, notifications, chapters, recaps, followed entities, or spectator-community tasks, read docs/product/RETENTION_IDEAS.md. Treat it as unapproved options and implement only ideas explicitly selected by the current issue.
 - For monetization, commerce, subscription, entitlement, or premium-feature tasks, read docs/product/MONETIZATION_IDEAS.md. Treat its contents as unapproved options and implement only ideas explicitly selected by the current issue.
+
