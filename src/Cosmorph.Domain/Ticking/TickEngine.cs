@@ -24,7 +24,12 @@ public enum DecisionRejectionReason
 /// </summary>
 public static class TickEngine
 {
+    /// <summary>Ceiling on ecology signals promoted to Chronicle events in one tick.</summary>
     public const int MaxEventsPerTick = 12;
+
+    /// <summary>Absolute ceiling on Chronicle events written by one tick, including Warden and chapter events.</summary>
+    public static int MaxTotalEventsPerTick(WorldState state) =>
+        MaxEventsPerTick + (state?.Wardens.Length ?? 0) + 1;
 
     /// <summary>Coarse catch-up compresses at most this many ticks into one aggregate transition.</summary>
     public const int MaxCompressedTicks = 2_000;
@@ -155,6 +160,11 @@ public static class TickEngine
         if (request.WorldId != state.Id)
         {
             return DecisionRejectionReason.WrongWorld;
+        }
+
+        if (request.WorldVersion != state.Version)
+        {
+            return DecisionRejectionReason.StaleWorldVersion;
         }
 
         if (request.Candidates.All(c => !string.Equals(c.Id, decision.SelectedCandidateId, StringComparison.Ordinal)))

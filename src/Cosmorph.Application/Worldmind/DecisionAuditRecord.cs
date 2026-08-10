@@ -49,4 +49,15 @@ public sealed record DecisionAuditRecord
     public int PromptTokens { get; init; }
 
     public int CompletionTokens { get; init; }
+
+    /// <summary>
+    /// Stable, process-independent identifier of a decision. It must never depend on a randomized
+    /// runtime hash, otherwise replay and deduplication break across processes.
+    /// </summary>
+    public static string CreateId(long tick, string fingerprint)
+    {
+        ArgumentNullException.ThrowIfNull(fingerprint);
+        var digest = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(fingerprint));
+        return $"{tick:D20}-{Convert.ToHexStringLower(digest.AsSpan(0, 8))}";
+    }
 }

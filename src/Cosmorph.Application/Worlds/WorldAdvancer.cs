@@ -248,7 +248,7 @@ public sealed class WorldAdvancer(
         await _store.WriteDecisionAuditAsync(
             new DecisionAuditRecord
             {
-                DecisionId = $"{request.Tick:D20}-{request.Fingerprint.GetHashCode(StringComparison.Ordinal):x8}",
+                DecisionId = DecisionAuditRecord.CreateId(request.Tick, request.Fingerprint),
                 WorldId = state.Id,
                 Tick = request.Tick,
                 WorldVersion = request.WorldVersion,
