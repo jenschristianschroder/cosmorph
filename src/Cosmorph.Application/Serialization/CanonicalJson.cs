@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Cosmorph.Application.Serialization;
 
@@ -28,6 +29,10 @@ public static class CanonicalJson
             UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
         };
 
+        options.Converters.Add(new WorldIdJsonConverter());
+        options.Converters.Add(new WardenIdJsonConverter());
+        options.Converters.Add(new SpeciesIdJsonConverter());
+        options.TypeInfoResolver = new DefaultJsonTypeInfoResolver();
         options.MakeReadOnly();
         return options;
     }

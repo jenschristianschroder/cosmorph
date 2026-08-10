@@ -46,6 +46,8 @@ public sealed class WorldFactory(IWorldStore store, IWorldSchedule schedule, ICl
             CreatedAtUtc = now,
             IsPaused = false,
             IsPublic = isPublic,
+            GridWidth = state.GridWidth,
+            GridHeight = state.GridHeight,
             SimulationVersion = state.SimulationVersion,
             ContentVersion = state.ContentVersion,
         };

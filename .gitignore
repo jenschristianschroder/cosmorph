@@ -1,0 +1,18 @@
+# .NET
+bin/
+obj/
+*.user
+artifacts/
+TestResults/
+.cosmorph-local/
+
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Editors and OS
+.vs/
+.idea/
+.DS_Store

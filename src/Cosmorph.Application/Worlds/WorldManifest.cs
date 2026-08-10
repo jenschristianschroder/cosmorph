@@ -34,6 +34,10 @@ public sealed record WorldManifest
     /// <summary>Only public worlds may be listed or read anonymously.</summary>
     public required bool IsPublic { get; init; }
 
+    public required int GridWidth { get; init; }
+
+    public required int GridHeight { get; init; }
+
     public required string SimulationVersion { get; init; }
 
     public required string ContentVersion { get; init; }
