@@ -99,3 +99,8 @@ These are non-negotiable:
 - Do not silently weaken a security, identity, network, cost, or world-isolation requirement to make a test pass.
 - Before declaring work complete, run the relevant build, unit tests, formatting, frontend tests, and Bicep validation available in the repository. Report anything that could not be run.
 
+## Roadmap and future development
+
+- For engagement, onboarding, retention, notifications, chapters, recaps, followed entities, or spectator-community tasks, read docs/product/RETENTION_IDEAS.md. Treat it as unapproved options and implement only ideas explicitly selected by the current issue.
+- For monetization, commerce, subscription, entitlement, or premium-feature tasks, read docs/product/MONETIZATION_IDEAS.md. Treat its contents as unapproved options and implement only ideas explicitly selected by the current issue.
+
