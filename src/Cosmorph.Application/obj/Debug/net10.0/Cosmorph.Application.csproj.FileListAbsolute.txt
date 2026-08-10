@@ -1,0 +1,15 @@
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.csproj.AssemblyReference.cache
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.GeneratedMSBuildEditorConfig.editorconfig
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.AssemblyInfoInputs.cache
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.AssemblyInfo.cs
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.csproj.CoreCompileInputs.cache
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/bin/Debug/net10.0/Cosmorph.Application.deps.json
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/bin/Debug/net10.0/Cosmorph.Application.dll
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/bin/Debug/net10.0/Cosmorph.Application.pdb
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/bin/Debug/net10.0/Cosmorph.Domain.dll
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/bin/Debug/net10.0/Cosmorph.Domain.pdb
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.797034B9.Up2Date
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.dll
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/refint/Cosmorph.Application.dll
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/Cosmorph.Application.pdb
+/home/runner/work/cosmorph/cosmorph/src/Cosmorph.Application/obj/Debug/net10.0/ref/Cosmorph.Application.dll

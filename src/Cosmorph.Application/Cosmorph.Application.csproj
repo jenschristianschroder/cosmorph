@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Cosmorph.Domain/Cosmorph.Domain.csproj" />
+  </ItemGroup>
+</Project>
