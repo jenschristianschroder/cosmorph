@@ -12,8 +12,11 @@ export interface SignInPanelProps {
  * Sign-in control and, once signed in, the only mutation the Observatory offers: creating a world.
  * Renders nothing at all when the API reports that sign-in is not configured, which is the ordinary
  * local-development state.
+ *
+ * The form is behind a toggle so the header stays one line while nobody is creating anything.
  */
 export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.ReactElement | null {
+  const [open, setOpen] = useState(false)
   const [worldId, setWorldId] = useState('')
   const [name, setName] = useState('')
   const [seed, setSeed] = useState('')
@@ -40,6 +43,7 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
         setWorldId('')
         setName('')
         setSeed('')
+        setOpen(false)
         onWorldCreated(worldId)
       } catch (error) {
         setFailure(error instanceof Error ? error.message : 'The world could not be created.')
@@ -59,6 +63,9 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
       {signedIn ? (
         <>
           <span className="signin-account">{auth.account ?? 'Signed in'}</span>
+          <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+            {open ? 'Cancel' : 'New world'}
+          </button>
           <button type="button" onClick={auth.signOut}>
             Sign out
           </button>
@@ -75,11 +82,10 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
         </p>
       )}
 
-      {signedIn && (
-        <form className="new-world" onSubmit={(event) => void onSubmit(event)}>
-          <h2>New world</h2>
+      {signedIn && open && (
+        <form className="new-world" aria-label="New world" onSubmit={(event) => void onSubmit(event)}>
           <label>
-            Identifier{' '}
+            Identifier
             <input
               value={worldId}
               onChange={(event) => setWorldId(event.target.value)}
@@ -88,7 +94,7 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
             />
           </label>
           <label>
-            Name{' '}
+            Name
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
@@ -97,7 +103,7 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
             />
           </label>
           <label>
-            Seed{' '}
+            Seed
             <input
               value={seed}
               onChange={(event) => setSeed(event.target.value)}
@@ -105,7 +111,7 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
               placeholder="random"
             />
           </label>
-          <label>
+          <label className="checkbox">
             <input
               type="checkbox"
               checked={isPublic}
@@ -122,8 +128,8 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
             </p>
           )}
           <p className="explanation">
-            Lower-case letters, digits and hyphens, three to forty characters. Only you can
-            configure this world&rsquo;s Wardens.
+            The identifier is lower-case letters, digits and hyphens, three to forty characters, and
+            appears in the address. Only you can configure this world&rsquo;s Wardens.
           </p>
         </form>
       )}

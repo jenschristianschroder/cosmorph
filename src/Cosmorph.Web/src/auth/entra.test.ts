@@ -34,9 +34,19 @@ describe('parseAuthConfig', () => {
 
 describe('displayNameFrom', () => {
   it('reads a name out of an identity token without verifying it', () => {
-    const payload = btoa(JSON.stringify({ name: 'Ada Lovelace' }))
+    expect(displayNameFrom(tokenFor({ name: 'Ada Lovelace' }))).toBe('Ada Lovelace')
+  })
 
-    expect(displayNameFrom(`header.${payload}.signature`)).toBe('Ada Lovelace')
+  it('reads a name that is not ASCII', () => {
+    // atob alone returns one character per byte, which would render this as Jens SchrÃ¸der.
+    expect(displayNameFrom(tokenFor({ name: 'Jens Schrøder' }))).toBe('Jens Schrøder')
+    expect(displayNameFrom(tokenFor({ name: '大明' }))).toBe('大明')
+  })
+
+  it('falls back to the sign-in name when the token carries no display name', () => {
+    expect(displayNameFrom(tokenFor({ preferred_username: 'ada@example.com' }))).toBe(
+      'ada@example.com',
+    )
   })
 
   it('returns null for anything unreadable, because it is only cosmetic', () => {
@@ -45,6 +55,14 @@ describe('displayNameFrom', () => {
     expect(displayNameFrom('header.$$$.signature')).toBeNull()
   })
 })
+
+/** Builds an unsigned token whose payload is base64url-encoded UTF-8, as a real one is. */
+function tokenFor(claims: Record<string, string>): string {
+  const utf8 = new TextEncoder().encode(JSON.stringify(claims))
+  const binary = String.fromCharCode(...utf8)
+  const payload = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `header.${payload}.signature`
+}
 
 describe('the PKCE challenge', () => {
   it('is the base64url SHA-256 of the verifier, with no padding', async () => {

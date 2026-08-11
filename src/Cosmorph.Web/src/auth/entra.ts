@@ -218,13 +218,23 @@ export function displayNameFrom(idToken: unknown): string | null {
   }
 
   try {
-    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
-    const claims = JSON.parse(json) as Record<string, unknown>
+    const claims = JSON.parse(decodeBase64Url(payload)) as Record<string, unknown>
     const name = claims['name'] ?? claims['preferred_username']
     return typeof name === 'string' ? name : null
   } catch {
     return null
   }
+}
+
+/**
+ * Decodes an unpadded base64url segment as UTF-8. `atob` alone returns one character per byte, which
+ * turns every name outside ASCII into mojibake — Schrøder arrives as SchrÃ¸der.
+ */
+function decodeBase64Url(segment: string): string {
+  const base64 = segment.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+  const binary = atob(padded)
+  return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)))
 }
 
 export function randomString(length: number): string {
