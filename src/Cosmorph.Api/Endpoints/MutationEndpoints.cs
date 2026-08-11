@@ -1,3 +1,4 @@
+using Cosmorph.Api.Authentication;
 using Cosmorph.Application.Abstractions;
 using Cosmorph.Application.Worlds;
 using Cosmorph.Domain.Content;
@@ -8,26 +9,34 @@ using Cosmorph.Infrastructure.Configuration;
 namespace Cosmorph.Api.Endpoints;
 
 /// <summary>
-/// Authenticated mutation contracts. Production authentication is not configured during this
-/// milestone, so production mutations fail closed. There is no development-header bypass.
+/// Authenticated mutation contracts. A caller signs in with Microsoft Entra ID and presents a bearer
+/// token carrying the mutation scope; the actor is then the token's directory object identifier and
+/// a world may only be reconfigured by the actor who created it. Where authentication is not
+/// configured the whole surface fails closed. There is no development-header bypass.
 /// </summary>
 public static class MutationEndpoints
 {
     public const int MaxIdempotencyKeyLength = 64;
     private const string IdempotencyHeader = "Idempotency-Key";
 
-    public static void MapMutationEndpoints(this IEndpointRouteBuilder builder, bool isProduction)
+    public static void MapMutationEndpoints(
+        this IEndpointRouteBuilder builder,
+        bool isProduction,
+        AuthenticationOptions authentication)
     {
         ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(authentication);
 
-        builder.MapPost("/api/worlds", async (
+        var authenticated = authentication.IsConfigured;
+
+        var create = builder.MapPost("/api/worlds", async (
             CreateWorldRequest request,
             HttpContext context,
             CosmorphOptions options,
             WorldFactory factory,
             CancellationToken cancellationToken) =>
         {
-            if (Closed(isProduction, options) is { } closed)
+            if (Gate(context, authenticated, isProduction, options, out var actorId) is { } closed)
             {
                 return closed;
             }
@@ -46,7 +55,7 @@ public static class MutationEndpoints
             }
 
             var result = await factory
-                .CreateAsync(worldId, request.Name, new WorldSeed(request.Seed), request.IsPublic, cancellationToken)
+                .CreateAsync(worldId, request.Name, new WorldSeed(request.Seed), request.IsPublic, actorId, cancellationToken)
                 .ConfigureAwait(false);
 
             return result.Created
@@ -54,7 +63,7 @@ public static class MutationEndpoints
                 : Results.Conflict(new { worldId = worldId.Value });
         });
 
-        builder.MapPut("/api/worlds/{worldId}/wardens/{wardenId}/charter", async (
+        var charter = builder.MapPut("/api/worlds/{worldId}/wardens/{wardenId}/charter", async (
             string worldId,
             string wardenId,
             CharterRequest request,
@@ -64,7 +73,7 @@ public static class MutationEndpoints
             IClock clock,
             CancellationToken cancellationToken) =>
         {
-            if (Closed(isProduction, options) is { } closed)
+            if (Gate(context, authenticated, isProduction, options, out var actorId) is { } closed)
             {
                 return closed;
             }
@@ -85,7 +94,10 @@ public static class MutationEndpoints
             }
 
             var manifest = await store.TryGetManifestAsync(world, cancellationToken).ConfigureAwait(false);
-            if (manifest is null)
+
+            // A world nobody owns, and a world owned by somebody else, are both reported as absent:
+            // the spectator surface already refuses to disclose which worlds exist.
+            if (manifest is not { } found || !IsOwnedBy(found.Manifest, actorId))
             {
                 return Problem("World not found.", StatusCodes.Status404NotFound);
             }
@@ -96,7 +108,7 @@ public static class MutationEndpoints
                 CommandId = idempotencyKey,
                 WorldId = world,
                 Kind = WorldCommandKind.SetWardenCharter,
-                ActorId = LocalActorId,
+                ActorId = actorId,
                 CreatedAtUtc = clock.UtcNow,
                 Charter = charter,
             };
@@ -104,19 +116,51 @@ public static class MutationEndpoints
             var accepted = await store.TryWriteCommandAsync(command, cancellationToken).ConfigureAwait(false);
             return Results.Accepted($"/api/worlds/{world.Value}", new { accepted, commandId = command.CommandId });
         });
+
+        if (authenticated)
+        {
+            create.RequireAuthorization(MutationAuthentication.PolicyName);
+            charter.RequireAuthorization(MutationAuthentication.PolicyName);
+        }
     }
 
     internal const string LocalActorId = "local-developer";
 
-    private static IResult? Closed(bool isProduction, CosmorphOptions options)
+    /// <summary>Only the actor who created a world may reconfigure it.</summary>
+    private static bool IsOwnedBy(WorldManifest manifest, string actorId) =>
+        manifest.OwnerId is { Length: > 0 } owner && string.Equals(owner, actorId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Resolves the actor, or refuses the request. With authentication configured the authorization
+    /// policy has already rejected anonymous and unscoped callers, so only a token missing an object
+    /// identifier remains. Without it, mutations are reachable only in a local, non-production
+    /// process running entirely on local doubles.
+    /// </summary>
+    private static IResult? Gate(
+        HttpContext context,
+        bool authenticated,
+        bool isProduction,
+        CosmorphOptions options,
+        out string actorId)
     {
         ArgumentNullException.ThrowIfNull(options);
+        actorId = string.Empty;
 
-        // Fail closed: mutations are only reachable in a local, non-production process.
-        return isProduction || !options.UseInMemoryStore || !options.UseFakeWorldmind
-            ? Problem("Mutation endpoints require production authentication, which is not configured.",
-                StatusCodes.Status501NotImplemented)
-            : null;
+        if (authenticated)
+        {
+            return MutationAuthentication.TryGetActorId(context.User, out actorId)
+                ? null
+                : Problem("The token carries no directory object identifier.", StatusCodes.Status403Forbidden);
+        }
+
+        if (isProduction || !options.UseInMemoryStore || !options.UseFakeWorldmind)
+        {
+            return Problem("Mutation endpoints require production authentication, which is not configured.",
+                StatusCodes.Status501NotImplemented);
+        }
+
+        actorId = LocalActorId;
+        return null;
     }
 
     private static bool TryIdempotencyKey(HttpContext context, out string key)

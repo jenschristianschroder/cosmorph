@@ -14,6 +14,13 @@ public sealed record WorldManifest
 
     public required string Name { get; init; }
 
+    /// <summary>
+    /// Actor who created the world, and the only one who may reconfigure it. Optional rather than
+    /// required so manifests written before ownership existed still load; such a world is one nobody
+    /// may reconfigure. Never projected into a spectator response.
+    /// </summary>
+    public string? OwnerId { get; init; }
+
     public required ulong Seed { get; init; }
 
     public required long Tick { get; init; }

@@ -9,7 +9,11 @@ import {
   type WorldSummary,
 } from './dto'
 
-/** Same-origin spectator client. It holds no credentials and never talks to Azure directly. */
+/**
+ * Same-origin API client. Spectator reads carry no credentials; a mutation carries only the bearer
+ * token the browser obtained from Microsoft Entra ID. Neither ever talks to Azure Storage or holds
+ * an Azure credential.
+ */
 
 export interface Conditional<T> {
   readonly value: T | null
@@ -96,5 +100,70 @@ export async function fetchEvents(
 function assertWorldId(worldId: string): void {
   if (!isValidWorldId(worldId)) {
     throw new Error('Invalid world identifier.')
+  }
+}
+
+/** The largest seed that survives a JSON round trip without losing precision. */
+export const MAX_SEED = Number.MAX_SAFE_INTEGER
+
+export interface NewWorld {
+  readonly worldId: string
+  readonly name: string
+  readonly seed: number
+  readonly isPublic: boolean
+}
+
+/**
+ * Creates a world. The caller is whoever the token says they are; nothing in this body identifies
+ * an actor, and the API would ignore it if it did.
+ */
+export async function createWorld(world: NewWorld, accessToken: string): Promise<void> {
+  assertWorldId(world.worldId)
+  if (world.name.trim().length === 0 || world.name.length > 60) {
+    throw new Error('A world name of up to 60 characters is required.')
+  }
+  if (!Number.isSafeInteger(world.seed) || world.seed < 0) {
+    throw new Error('The seed must be a whole number that is not negative.')
+  }
+
+  const response = await fetch('/api/worlds', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+
+      // A retry of the same click must not create a second world.
+      'Idempotency-Key': crypto.randomUUID(),
+    },
+    body: JSON.stringify({
+      worldId: world.worldId,
+      name: world.name.trim(),
+      seed: world.seed,
+      isPublic: world.isPublic,
+    }),
+  })
+
+  if (response.ok) {
+    return
+  }
+
+  throw new Error(describeFailure(response.status))
+}
+
+function describeFailure(status: number): string {
+  switch (status) {
+    case 400:
+      return 'The world could not be created: check the identifier, name and seed.'
+    case 401:
+      return 'Your session has expired. Sign in again.'
+    case 403:
+      return 'Your account is not permitted to create worlds.'
+    case 409:
+      return 'That world identifier is already taken.'
+    case 429:
+      return 'Too many requests. Try again in a minute.'
+    default:
+      return `The world could not be created (status ${status}).`
   }
 }

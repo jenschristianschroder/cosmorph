@@ -29,6 +29,7 @@ public sealed class TickRunnerTests
                 $"Runner World {i}",
                 new WorldSeed(1000UL + (ulong)i),
                 isPublic: true,
+                "test-owner",
                 CancellationToken.None);
         }
 

@@ -39,7 +39,16 @@ public static class DemoWorlds
         {
             var worldId = WorldId.Parse(id);
             var result = await factory
-                .CreateAsync(worldId, name, new WorldSeed(seed), isPublic: true, CancellationToken.None)
+                .CreateAsync(
+                    worldId,
+                    name,
+                    new WorldSeed(seed),
+                    isPublic: true,
+
+                    // Seeding only runs in local mode, so the local actor owns the demo worlds and can
+                    // reconfigure their Wardens through the ordinary authenticated-shaped path.
+                    MutationEndpoints.LocalActorId,
+                    CancellationToken.None)
                 .ConfigureAwait(false);
             if (!result.Created)
             {

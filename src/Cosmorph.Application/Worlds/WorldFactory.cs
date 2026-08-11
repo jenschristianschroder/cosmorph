@@ -18,14 +18,20 @@ public sealed class WorldFactory(IWorldStore store, IWorldSchedule schedule, ICl
     private readonly IWorldSchedule _schedule = schedule;
     private readonly IClock _clock = clock;
 
+    /// <param name="ownerId">
+    /// Actor creating the world. It is resolved from the caller's token, never from a request body,
+    /// and it is the only actor permitted to reconfigure the world afterwards.
+    /// </param>
     public async Task<CreateWorldResult> CreateAsync(
         WorldId worldId,
         string name,
         WorldSeed seed,
         bool isPublic,
+        string ownerId,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         if (name.Length > MaxNameLength)
         {
             throw new ArgumentException("World name is too long.", nameof(name));
@@ -37,6 +43,7 @@ public sealed class WorldFactory(IWorldStore store, IWorldSchedule schedule, ICl
         {
             Id = worldId,
             Name = name,
+            OwnerId = ownerId,
             Seed = seed.Value,
             Tick = state.Tick.Value,
             Version = state.Version,

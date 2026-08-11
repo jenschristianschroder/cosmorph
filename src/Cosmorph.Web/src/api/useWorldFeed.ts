@@ -25,8 +25,15 @@ export interface WorldFeed {
 /**
  * Snapshot plus cursor-based event polling with conditional requests. Polling slows down when the
  * tab is hidden, and a missed event range is recovered from the last committed sequence.
+ *
+ * The world list is fetched once rather than polled, because it only changes when this browser
+ * creates a world. Incrementing `worldsVersion` is how the page says that just happened.
  */
-export function useWorldFeed(worldId: string | null, intervalMs = 5000): WorldFeed {
+export function useWorldFeed(
+  worldId: string | null,
+  intervalMs = 5000,
+  worldsVersion = 0,
+): WorldFeed {
   const [worlds, setWorlds] = useState<WorldList | null>(null)
   const [summary, setSummary] = useState<WorldSummary | null>(null)
   const [snapshot, setSnapshot] = useState<SpectatorSnapshot | null>(null)
@@ -46,7 +53,7 @@ export function useWorldFeed(worldId: string | null, intervalMs = 5000): WorldFe
       .then(setWorlds)
       .catch(() => setConnection('disconnected'))
     return () => controller.abort()
-  }, [])
+  }, [worldsVersion])
 
   useEffect(() => {
     cursorRef.current = 0

@@ -23,6 +23,17 @@ public sealed class CosmorphOptions
 {
     public const string SectionName = "Cosmorph";
 
+    /// <summary>Binds the configuration section. Callers that need a value before the container is
+    /// built, such as authentication wiring, use this rather than resolving a service.</summary>
+    public static CosmorphOptions FromConfiguration(IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var options = new CosmorphOptions();
+        configuration.GetSection(SectionName).Bind(options);
+        return options;
+    }
+
     /// <summary>Blob service URI, for example https://example.blob.core.windows.net.</summary>
     public string? StorageBlobServiceUri { get; set; }
 
@@ -56,6 +67,9 @@ public sealed class CosmorphOptions
     public bool SeedDemoWorlds { get; set; }
 
     public SimulationOptions Simulation { get; set; } = new();
+
+    /// <summary>Entra ID settings for authenticated mutations. Empty means mutations stay closed.</summary>
+    public AuthenticationOptions Authentication { get; set; } = new();
 
     /// <summary>
     /// Fails closed in Production: a fake Worldmind, an in-memory store or anything that looks like a
@@ -121,12 +135,11 @@ public static class CosmorphServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var options = new CosmorphOptions();
-        configuration.GetSection(CosmorphOptions.SectionName).Bind(options);
+        var options = CosmorphOptions.FromConfiguration(configuration);
         options.ValidateForEnvironment(isProduction);
-
         services.AddSingleton(options);
         services.AddSingleton(options.Simulation);
+        services.AddSingleton(options.Authentication);
         services.AddSingleton<IClock, SystemClock>();
 
         if (options.UseInMemoryStore && options.ResolvedLocalStorePath is { } localPath)

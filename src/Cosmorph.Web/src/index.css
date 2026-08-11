@@ -64,6 +64,41 @@ body,
   letter-spacing: 0.04em;
 }
 
+/* Sign-in sits at the far end of the header, and pushes its world form beneath it. */
+.signin {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.signin-account {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.new-world {
+  flex-basis: 100%;
+  display: grid;
+  gap: 0.4rem;
+  justify-items: end;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.new-world h2 {
+  font-size: 0.85rem;
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.new-world input[type='text'],
+.new-world input:not([type]) {
+  width: 12rem;
+}
+
 .panel-left {
   top: 5.5rem;
   left: 1rem;

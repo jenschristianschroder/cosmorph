@@ -95,13 +95,33 @@ public sealed class DeploymentTemplateTests
 
         Assert.Contains("name: guid(storageAccount.id, principalId, roleDefinitionId)", storageRole, StringComparison.Ordinal);
 
-        // Storage Blob Data Reader for the API, Storage Blob Data Contributor for the tick job.
-        Assert.Contains("2a2b9908-6ea1-4ae2-8e65-a410df84e7d1", main, StringComparison.Ordinal);
+        // Storage Blob Data Contributor for both runtime identities: the narrowest built-in role that
+        // can write a blob, which the API needs once an authenticated caller can create a world.
         Assert.Contains("ba92f5b4-2d11-453d-a403-e96b0029c9fe", main, StringComparison.Ordinal);
 
         // Owner and Contributor must never be granted to a runtime identity.
         Assert.DoesNotContain("8e3af657-a8ff-443c-a75c-2fe8c4bcb635", main, StringComparison.Ordinal);
         Assert.DoesNotContain("b24988ac-6180-42a0-ab88-20f7382dd24c", main, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuthenticationConfigurationIsPlainNonSecretSettings()
+    {
+        var webApp = ReadTemplate(Path.Combine("modules", "webApp.bicep"));
+        var main = ReadTemplate("main.bicep");
+
+        // A tenant and an application identifier reach the container as ordinary environment
+        // variables, because they are not secrets and the registration has no credential to protect.
+        Assert.Contains("Cosmorph__Authentication__TenantId", webApp, StringComparison.Ordinal);
+        Assert.Contains("Cosmorph__Authentication__ClientId", webApp, StringComparison.Ordinal);
+        Assert.Contains("authTenantId: authTenantId", main, StringComparison.Ordinal);
+        Assert.Contains("authClientId: authClientId", main, StringComparison.Ordinal);
+
+        // Nothing about sign-in may become a secret parameter or a secret reference.
+        Assert.DoesNotContain("@secure()\nparam authTenantId", webApp, StringComparison.Ordinal);
+        Assert.DoesNotContain("authClientSecret", webApp, StringComparison.Ordinal);
+        Assert.DoesNotContain("authClientSecret", main, StringComparison.Ordinal);
+        Assert.DoesNotContain("secretRef", webApp, StringComparison.Ordinal);
     }
 
     [Fact]

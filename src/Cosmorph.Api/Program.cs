@@ -1,4 +1,5 @@
 using System.Globalization;
+using Cosmorph.Api.Authentication;
 using Cosmorph.Api.Endpoints;
 using Cosmorph.Application.Serialization;
 using Cosmorph.Infrastructure.Configuration;
@@ -26,6 +27,13 @@ builder.WebHost.ConfigureKestrel(options =>
 
 builder.Services.AddCosmorph(builder.Configuration, builder.Environment.IsProduction());
 builder.Services.AddProblemDetails();
+
+// Mutations are the only authenticated surface. A production API that cannot authenticate anyone
+// refuses to start rather than serving every mutation as a permanent 501.
+var authentication = CosmorphOptions.FromConfiguration(builder.Configuration).Authentication;
+authentication.ValidateForEnvironment(builder.Environment.IsProduction());
+builder.Services.AddMutationAuthentication(authentication);
+
 builder.Services.Configure<JsonOptions>(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
@@ -63,14 +71,27 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseRateLimiter();
 
+if (authentication.IsConfigured)
+{
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+
 app.Use(async (context, next) =>
 {
     var headers = context.Response.Headers;
     headers["X-Content-Type-Options"] = "nosniff";
     headers["Referrer-Policy"] = "no-referrer";
     headers["X-Frame-Options"] = "DENY";
+
+    // Sign-in needs the directory reachable for one thing only: the browser POSTs its authorization
+    // code to the token endpoint. The flow is a full-page redirect with no hidden frame, so the
+    // directory is allowed in connect-src and nowhere else, and only when sign-in exists at all.
+    var signIn = authentication.IsConfigured ? " https://login.microsoftonline.com" : string.Empty;
     headers["Content-Security-Policy"] =
-        "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+        "default-src 'self'; img-src 'self' data: blob:; script-src 'self'; style-src 'self'; connect-src 'self'"
+        + signIn + "; frame-src 'none'"
+        + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
     await next().ConfigureAwait(false);
 });
 
@@ -85,8 +106,9 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 app.MapHealthEndpoints();
+app.MapConfigEndpoints();
 app.MapSpectatorEndpoints();
-app.MapMutationEndpoints(app.Environment.IsProduction());
+app.MapMutationEndpoints(app.Environment.IsProduction(), authentication);
 app.MapFallbackToFile("index.html");
 
 await DemoWorlds.SeedAsync(app.Services).ConfigureAwait(false);

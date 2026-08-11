@@ -9,6 +9,8 @@ import {
   type OverlayMode,
 } from './render/palette'
 import { cellToLatLon } from './render/texture'
+import { SignInPanel } from './auth/SignInPanel'
+import { useAuth } from './auth/useAuth'
 import type { SpectatorEvent } from './api/dto'
 
 const OVERLAYS: readonly { readonly id: OverlayMode; readonly label: string }[] = [
@@ -28,8 +30,18 @@ export function App(): React.ReactElement {
   const [focus, setFocus] = useState<{ latitude: number; longitude: number } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<SpectatorEvent | null>(null)
 
+  // Bumped when this browser creates a world, which is the only moment the list can have changed
+  // for us before the next poll would notice.
+  const [worldsVersion, setWorldsVersion] = useState(0)
+
+  const auth = useAuth()
   const reducedMotion = usePrefersReducedMotion()
-  const feed = useWorldFeed(worldId)
+  const feed = useWorldFeed(worldId, 5000, worldsVersion)
+
+  const onWorldCreated = useCallback((created: string) => {
+    setWorldId(created)
+    setWorldsVersion((version) => version + 1)
+  }, [])
 
   useEffect(() => {
     if (!worldId && feed.worlds && feed.worlds.worlds.length > 0) {
@@ -94,6 +106,7 @@ export function App(): React.ReactElement {
           {feed.connection === 'disconnected' && 'Disconnected — retrying'}
           {feed.connection === 'corrupt' && 'Unreadable data — retrying'}
         </p>
+        <SignInPanel auth={auth} onWorldCreated={onWorldCreated} />
       </header>
 
       <section className="panel panel-left" aria-label="World state">

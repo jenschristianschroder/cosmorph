@@ -54,6 +54,18 @@ param modelAccountName string = ''
 @description('Resource group of the existing Azure AI account. Defaults to this resource group.')
 param modelResourceGroupName string = resourceGroup().name
 
+@description('''
+Entra directory (tenant) identifier used to authenticate world mutations. Not a secret. Leaving it
+empty is only valid for a non-production deployment: a Production API refuses to start without it.
+''')
+param authTenantId string = ''
+
+@description('''
+Entra application (client) identifier for the Observatory and the API audience. Not a secret; the
+registration deliberately has no client secret or certificate.
+''')
+param authClientId string = ''
+
 @description('Maximum replicas for the web/API container app.')
 @minValue(1)
 @maxValue(10)
@@ -76,8 +88,8 @@ param maxBucketsPerRun int = 30
 @minValue(1)
 param logDailyQuotaGb int = 1
 
-// Storage Blob Data Reader / Contributor.
-var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+// Storage Blob Data Contributor. It is the narrowest built-in role that can write a blob, and both
+// runtime identities now need to: the API creates worlds, the tick job advances them.
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 
 var uniquePart = uniqueString(resourceGroup().id, environmentName)
@@ -149,6 +161,8 @@ module webApp 'modules/webApp.bicep' = {
     storageBlobServiceUri: storage.outputs.blobServiceUri
     modelEndpoint: modelEndpoint
     modelDeployment: modelDeployment
+    authTenantId: authTenantId
+    authClientId: authClientId
     maxReplicas: apiMaxReplicas
   }
 }
@@ -171,13 +185,14 @@ module tickJob 'modules/tickJob.bicep' = {
   }
 }
 
-// The API only reads world state; the tick job is the only normal writer.
+// The API writes the world documents an authenticated caller creates: manifests, initial snapshots,
+// schedule markers and queued commands. The tick job remains the only writer of simulation outcomes.
 module webAppStorageRole 'modules/storageRoleAssignment.bicep' = {
   name: 'web-app-storage-role'
   params: {
     storageAccountName: storage.outputs.storageAccountName
     principalId: webApp.outputs.principalId
-    roleDefinitionId: storageBlobDataReaderRoleId
+    roleDefinitionId: storageBlobDataContributorRoleId
   }
 }
 

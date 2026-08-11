@@ -41,6 +41,18 @@ param modelEndpoint string
 @description('Azure AI model deployment name.')
 param modelDeployment string
 
+@description('''
+Entra directory (tenant) identifier used to validate mutation tokens. Not a secret: it is part of
+every sign-in request the browser makes. Empty leaves the mutation surface closed.
+''')
+param authTenantId string = ''
+
+@description('''
+Entra application (client) identifier. It is both the Observatory's public client and the audience
+the API accepts. Not a secret; no client secret or certificate exists.
+''')
+param authClientId string = ''
+
 @description('Maximum replicas. The API stays at zero minimum replicas until latency requires otherwise.')
 @minValue(1)
 @maxValue(10)
@@ -128,6 +140,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'Cosmorph__ModelDeployment'
               value: modelDeployment
+            }
+            {
+              name: 'Cosmorph__Authentication__TenantId'
+              value: authTenantId
+            }
+            {
+              name: 'Cosmorph__Authentication__ClientId'
+              value: authClientId
             }
           ]
           probes: useApplicationImage ? applicationProbes : []

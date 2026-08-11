@@ -32,7 +32,7 @@ public sealed class WorldAdvancerTests
         var clock = new FakeClock(Start);
         var simulation = options ?? new SimulationOptions();
         var factory = new WorldFactory(store, schedule, clock);
-        await factory.CreateAsync(WorldId.Parse(worldId), "Advance World", new WorldSeed(seed), isPublic: true, CancellationToken.None);
+        await factory.CreateAsync(WorldId.Parse(worldId), "Advance World", new WorldSeed(seed), isPublic: true, "test-owner", CancellationToken.None);
 
         var advancer = new WorldAdvancer(store, schedule, gameMaster ?? new FakeGameMaster(), clock, simulation);
         return new Harness(store, schedule, clock, advancer, simulation);
@@ -154,8 +154,8 @@ public sealed class WorldAdvancerTests
         var factory = new WorldFactory(store, schedule, clock);
         var first = WorldId.Parse("isolated-first");
         var second = WorldId.Parse("isolated-second");
-        await factory.CreateAsync(first, "First", new WorldSeed(7UL), isPublic: true, CancellationToken.None);
-        await factory.CreateAsync(second, "Second", new WorldSeed(7UL), isPublic: true, CancellationToken.None);
+        await factory.CreateAsync(first, "First", new WorldSeed(7UL), isPublic: true, "test-owner", CancellationToken.None);
+        await factory.CreateAsync(second, "Second", new WorldSeed(7UL), isPublic: true, "test-owner", CancellationToken.None);
 
         var advancer = new WorldAdvancer(store, schedule, new FakeGameMaster(), clock, new SimulationOptions());
         clock.Advance(TimeSpan.FromMinutes(12));
