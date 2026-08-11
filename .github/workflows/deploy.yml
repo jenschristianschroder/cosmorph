@@ -60,6 +60,9 @@ jobs:
       - name: Deploy
         id: deploy
         run: |
+          # Phase one: bootstrap image and no registry block. The runtimes' system-assigned
+          # identities do not exist yet, so they cannot hold AcrPull and cannot pull from the
+          # registry. This deployment is what creates those identities and grants them the role.
           az deployment group create \
             --name "cosmorph-${{ github.run_id }}" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
@@ -68,7 +71,7 @@ jobs:
                          modelEndpoint="${{ vars.COSMORPH_MODEL_ENDPOINT }}" \
                          modelDeployment="${{ vars.COSMORPH_MODEL_DEPLOYMENT }}" \
                          modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
-                         useRegistryImages=true \
+                         useRegistryImages=false \
             --query properties.outputs -o json > outputs.json
           echo "registryLoginServer=$(jq -r '.registryLoginServer.value' outputs.json)" >> "$GITHUB_OUTPUT"
           echo "tickJobName=$(jq -r '.tickJobName.value' outputs.json)" >> "$GITHUB_OUTPUT"
@@ -113,24 +116,35 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - name: Update the web/API container app
+      - name: Roll out the published images
         env:
           REGISTRY: ${{ needs.infrastructure.outputs.registryLoginServer }}
         run: |
-          az containerapp update \
+          # Phase two: the images now exist and both identities hold AcrPull, so the template can
+          # attach the registry, switch to the application port and enable the health probes.
+          az deployment group create \
+            --name "cosmorph-${{ github.run_id }}-apps" \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
+            --template-file infra/main.bicep \
+            --parameters environmentName="${{ inputs.environmentName }}" \
+                         modelEndpoint="${{ vars.COSMORPH_MODEL_ENDPOINT }}" \
+                         modelDeployment="${{ vars.COSMORPH_MODEL_DEPLOYMENT }}" \
+                         modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
+                         useRegistryImages=true \
+                         apiImage="$REGISTRY/cosmorph-api:${{ github.sha }}" \
+                         tickJobImage="$REGISTRY/cosmorph-tickjob:${{ github.sha }}" \
+            --query properties.outputs -o json
+      - name: Assert the API is serving
+        run: |
+          fqdn=$(az containerapp show \
             --name "cosmorph-${{ inputs.environmentName }}-web" \
             --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --image "$REGISTRY/cosmorph-api:${{ github.sha }}"
-      - name: Update the tick job
-        env:
-          REGISTRY: ${{ needs.infrastructure.outputs.registryLoginServer }}
-        run: |
-          az containerapp job update \
-            --name "${{ needs.infrastructure.outputs.tickJobName }}" \
-            --resource-group "${{ vars.AZURE_RESOURCE_GROUP }}" \
-            --image "$REGISTRY/cosmorph-tickjob:${{ github.sha }}"
+            --query properties.configuration.ingress.fqdn -o tsv)
+          curl --fail --silent --show-error --retry 10 --retry-delay 15 \
+            --retry-all-errors "https://$fqdn/health/ready"

@@ -145,6 +145,7 @@ module webApp 'modules/webApp.bicep' = {
     managedEnvironmentId: appEnvironment.outputs.environmentId
     image: apiImage
     registryLoginServer: useRegistryImages ? registry.outputs.loginServer : ''
+    useApplicationImage: useRegistryImages
     storageBlobServiceUri: storage.outputs.blobServiceUri
     modelEndpoint: modelEndpoint
     modelDeployment: modelDeployment

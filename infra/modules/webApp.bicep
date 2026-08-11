@@ -19,6 +19,19 @@ param image string
 @description('Registry login server used for managed-identity pulls. Empty for public images.')
 param registryLoginServer string = ''
 
+@description('''
+False during phase one, when the public bootstrap image is running. That image listens on a
+different port and serves no health endpoints, so the application port and probes only apply once the
+real image is published.
+''')
+param useApplicationImage bool = false
+
+@description('Port the published application image listens on.')
+param applicationPort int = 8080
+
+@description('Port the public bootstrap image listens on during phase one.')
+param bootstrapPort int = 80
+
 @description('Blob service URI of the world store.')
 param storageBlobServiceUri string
 
@@ -36,6 +49,29 @@ param maxReplicas int = 3
 param cpu string = '0.5'
 param memory string = '1Gi'
 
+var activePort = useApplicationImage ? applicationPort : bootstrapPort
+
+// The bootstrap image answers neither health path, so probing it would fail the revision and the
+// whole deployment would time out before the real image is ever published.
+var applicationProbes = [
+  {
+    type: 'Liveness'
+    httpGet: {
+      path: '/health/live'
+      port: applicationPort
+    }
+    periodSeconds: 30
+  }
+  {
+    type: 'Readiness'
+    httpGet: {
+      path: '/health/ready'
+      port: applicationPort
+    }
+    periodSeconds: 15
+  }
+]
+
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
@@ -50,7 +86,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 8080
+        targetPort: activePort
         transport: 'auto'
         allowInsecure: false
         traffic: [
@@ -94,24 +130,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               value: modelDeployment
             }
           ]
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/health/live'
-                port: 8080
-              }
-              periodSeconds: 30
-            }
-            {
-              type: 'Readiness'
-              httpGet: {
-                path: '/health/ready'
-                port: 8080
-              }
-              periodSeconds: 15
-            }
-          ]
+          probes: useApplicationImage ? applicationProbes : []
         }
       ]
       scale: {
