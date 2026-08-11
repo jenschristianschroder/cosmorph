@@ -42,6 +42,22 @@ jobs:
           fi
       - run: dotnet test --configuration Release
 
+      # The Observatory is compiled inside the image build, several minutes later. Typechecking,
+      # linting and testing it here means a broken frontend fails the run before anything is pushed
+      # to the registry.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: src/Cosmorph.Web/package-lock.json
+      - name: Test the Observatory
+        working-directory: src/Cosmorph.Web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm test
+
   infrastructure:
     name: Deploy infrastructure
     needs: verify

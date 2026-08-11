@@ -1,14 +1,8 @@
-import { describe, expect, it, vi, beforeAll, afterAll } from 'vitest'
-import { webcrypto } from 'node:crypto'
+import { describe, expect, it } from 'vitest'
 import { challengeFor, displayNameFrom, parseAuthConfig, randomString } from './entra'
 
 const tenantId = '00000000-0000-0000-0000-0000000000aa'
 const clientId = '00000000-0000-0000-0000-0000000000bb'
-
-// jsdom's Web Crypto is not guaranteed to expose subtle, so the tests run against the platform's
-// own implementation. This is the same API the browser provides; nothing here is a fake.
-beforeAll(() => vi.stubGlobal('crypto', webcrypto))
-afterAll(() => vi.unstubAllGlobals())
 
 describe('parseAuthConfig', () => {
   it('accepts the configuration the API publishes', () => {
@@ -54,7 +48,8 @@ describe('displayNameFrom', () => {
 
 describe('the PKCE challenge', () => {
   it('is the base64url SHA-256 of the verifier, with no padding', async () => {
-    // The known digest of "abc", so this asserts the encoding rather than restating it.
+    // The known digest of "abc", so this asserts the encoding against a published value rather
+    // than restating whatever the implementation happens to produce.
     expect(await challengeFor('abc')).toBe('ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0')
   })
 
