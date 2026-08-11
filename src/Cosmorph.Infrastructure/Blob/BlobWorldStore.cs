@@ -40,20 +40,30 @@ public sealed class BlobWorldStore(BlobContainerClient container) : IWorldStore
     public async Task<IReadOnlyList<WorldManifest>> ListPublicWorldsAsync(CancellationToken cancellationToken)
     {
         var manifests = new List<WorldManifest>();
-        await foreach (var item in _container.GetBlobsAsync(BlobTraits.None, BlobStates.None, "worlds/", cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (!item.Name.EndsWith("/manifest.json", StringComparison.Ordinal))
+            await foreach (var item in _container.GetBlobsAsync(BlobTraits.None, BlobStates.None, "worlds/", cancellationToken).ConfigureAwait(false))
             {
-                continue;
-            }
+                if (!item.Name.EndsWith("/manifest.json", StringComparison.Ordinal))
+                {
+                    continue;
+                }
 
-            var content = await _container.GetBlobClient(item.Name)
-                .DownloadContentAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
-            var manifest = CanonicalJson.Deserialize<WorldManifest>(content.Value.Content.ToString());
-            if (manifest.IsPublic)
-            {
-                manifests.Add(manifest);
+                var content = await _container.GetBlobClient(item.Name)
+                    .DownloadContentAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+                var manifest = CanonicalJson.Deserialize<WorldManifest>(content.Value.Content.ToString());
+                if (manifest.IsPublic)
+                {
+                    manifests.Add(manifest);
+                }
             }
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // Before the first world is created the container does not exist yet. That is an empty
+            // catalogue, not a fault: this identity is read-only and never creates the container.
+            // A missing role or an unreachable private endpoint still surfaces, as 403 or a timeout.
+            return [];
         }
 
         return [.. manifests.OrderBy(m => m.Id.Value, StringComparer.Ordinal)];
