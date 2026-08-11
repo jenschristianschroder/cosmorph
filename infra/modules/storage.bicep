@@ -17,8 +17,11 @@ param tags object = {}
 ])
 param skuName string = 'Standard_LRS'
 
-@description('Blob container that holds snapshots, event segments, schedule markers and leases.')
-param containerName string = 'worlds'
+@description('''
+Blob container that holds snapshots, event segments, schedule markers and leases. This must match
+BlobPaths.ContainerName in the application; world data lives under a worlds/ prefix inside it.
+''')
+param containerName string = 'cosmorph'
 
 @description('Subnet that hosts the Blob private endpoint.')
 param privateEndpointSubnetId string

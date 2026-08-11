@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Cosmorph.Infrastructure.Blob;
 
 namespace Cosmorph.Infrastructure.Tests;
 
@@ -208,5 +209,18 @@ public sealed class DeploymentTemplateTests
             Assert.Contains("USER $APP_UID", content, StringComparison.Ordinal);
             Assert.DoesNotContain("USER root", content, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void StorageContainerNameMatchesTheApplication()
+    {
+        // A mismatch deploys cleanly and then fails at runtime on every blob call with
+        // ContainerNotFound, because the container the template creates is not the one the
+        // runtimes open. Nothing else in the deployment catches it.
+        var template = ReadTemplate(Path.Combine("modules", "storage.bicep"));
+        var match = Regex.Match(template, @"param\s+containerName\s+string\s*=\s*'(?<name>[^']+)'");
+
+        Assert.True(match.Success, "storage.bicep must declare a default containerName.");
+        Assert.Equal(BlobPaths.ContainerName, match.Groups["name"].Value);
     }
 }
