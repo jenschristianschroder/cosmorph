@@ -52,19 +52,28 @@ public sealed class BlobWorldSchedule(BlobContainerClient container, int shard =
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         var worlds = new List<WorldId>();
-        await foreach (var item in _container
-            .GetBlobsAsync(BlobTraits.None, BlobStates.None, BlobPaths.SchedulePrefix(TickRunner.Bucket(bucket), _shard), cancellationToken)
-            .ConfigureAwait(false))
+        try
         {
-            if (worlds.Count >= limit)
+            await foreach (var item in _container
+                .GetBlobsAsync(BlobTraits.None, BlobStates.None, BlobPaths.SchedulePrefix(TickRunner.Bucket(bucket), _shard), cancellationToken)
+                .ConfigureAwait(false))
             {
-                break;
-            }
+                if (worlds.Count >= limit)
+                {
+                    break;
+                }
 
-            if (WorldId.TryParse(BlobPaths.WorldIdFromMarker(item.Name), out var worldId))
-            {
-                worlds.Add(worldId);
+                if (WorldId.TryParse(BlobPaths.WorldIdFromMarker(item.Name), out var worldId))
+                {
+                    worlds.Add(worldId);
+                }
             }
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // The container is created with the first world, so before then every bucket is empty.
+            // Failing here would abort each scheduled run on a new environment.
+            return [];
         }
 
         return [.. worlds.OrderBy(w => w.Value, StringComparer.Ordinal)];
