@@ -95,21 +95,30 @@ app.Use(async (context, next) =>
     await next().ConfigureAwait(false);
 });
 
-app.UseDefaultFiles();
-app.UseStaticFiles(new StaticFileOptions
+// The shell is what names the hashed assets, so a cached copy pins a browser to a build that no
+// longer exists. It must always be revalidated; everything else is content-addressed and may be
+// held for a week.
+var staticFiles = new StaticFileOptions
 {
     OnPrepareResponse = context =>
         context.Context.Response.Headers.CacheControl =
             context.File.Name.Equals("index.html", StringComparison.OrdinalIgnoreCase)
                 ? "no-cache"
                 : "public, max-age=" + TimeSpan.FromDays(7).TotalSeconds.ToString(CultureInfo.InvariantCulture),
-});
+};
+
+app.UseDefaultFiles();
+app.UseStaticFiles(staticFiles);
 
 app.MapHealthEndpoints();
 app.MapConfigEndpoints();
 app.MapSpectatorEndpoints();
 app.MapMutationEndpoints(app.Environment.IsProduction(), authentication);
-app.MapFallbackToFile("index.html");
+
+// The same options, because the fallback serves the shell through its own middleware. Without them
+// "/" answers with no directive at all and the browser is free to invent one from the file's age,
+// which is how a deployed fix can go unnoticed for hours.
+app.MapFallbackToFile("index.html", staticFiles);
 
 await DemoWorlds.SeedAsync(app.Services).ConfigureAwait(false);
 

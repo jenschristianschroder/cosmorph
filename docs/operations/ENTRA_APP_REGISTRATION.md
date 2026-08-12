@@ -20,6 +20,7 @@ One registration acting as both the API and its browser client:
 | Sign-in audience | `AzureADMyOrg` (this directory only) |
 | Application ID URI | `api://<appId>` |
 | Exposed scope | `World.Write` |
+| Access token version | `2` |
 | Platform | Single-page application |
 | Redirect URIs | the Observatory origin and `http://localhost:5173/` |
 | Credentials | none |
@@ -54,6 +55,7 @@ az rest --method patch \
   --headers Content-Type=application/json \
   --body "{
     \"api\": {
+      \"requestedAccessTokenVersion\": 2,
       \"oauth2PermissionScopes\": [{
         \"id\": \"$SCOPE_ID\",
         \"value\": \"World.Write\",
@@ -70,6 +72,13 @@ az rest --method patch \
     }
   }"
 ```
+
+`requestedAccessTokenVersion` is not optional. Left unset, a registration created this way issues
+**v1** access tokens, whose issuer is `https://sts.windows.net/<tenantId>/` and whose audience is
+`api://<appId>`. The API pins the v2.0 issuer `https://login.microsoftonline.com/<tenantId>/v2.0`,
+so every mutation comes back **401** and the Observatory reports an expired session — on a token
+minted seconds earlier. Only newly issued tokens are affected by the change, so anyone already
+signed in has to sign out and back in.
 
 Then, as a **second** call, list the registration against itself. Graph rejects a
 `preAuthorizedApplications` entry whose permission id does not exist yet, so this cannot be merged
@@ -95,7 +104,7 @@ Confirm no credential exists, then read out the two identifiers:
 
 ```bash
 az ad app credential list --id "$APP_ID"   # must print []
-az ad app show --id "$APP_ID" --query "{appId:appId, spa:spa.redirectUris, scopes:api.oauth2PermissionScopes[].value}"
+az ad app show --id "$APP_ID" --query "{appId:appId, tokenVersion:api.requestedAccessTokenVersion, spa:spa.redirectUris, scopes:api.oauth2PermissionScopes[].value}"
 az account show --query tenantId -o tsv
 ```
 
