@@ -120,6 +120,24 @@ Then dispatch the `deploy` workflow. The API reads them as
 environment variables, and republishes the pair — plus the scope URI — from `GET /api/config` so the
 static Observatory build can sign in without being compiled per tenant.
 
+## When a mutation comes back 401
+
+`appsettings.json` holds `Microsoft.AspNetCore` at `Warning`, so the bearer handler's account of
+*why* it rejected a token is discarded and the Observatory can only say the session expired. To see
+the reason, raise that one category on the running app and try the mutation again:
+
+```bash
+az containerapp update -g rg-cosmorph-dev -n cosmorph-dev-web \
+  --set-env-vars "Logging__LogLevel__Microsoft.AspNetCore.Authentication=Information"
+
+az containerapp logs show -g rg-cosmorph-dev -n cosmorph-dev-web --tail 60 --format text
+```
+
+The log names the failure exactly — issuer, audience, signature or lifetime — and says how many
+signing keys it loaded from the directory, which also settles whether the container can reach Entra
+at all. Remove the variable afterwards with `--remove-env-vars`, so the running app matches what
+Bicep declares.
+
 ## Adding an environment
 
 A second environment (its own container app host) needs its origin added to `spa.redirectUris`; the
