@@ -28,12 +28,13 @@ public static class ProposalResolver
         var cells = state.Cells.ToArray();
         var populations = state.Populations.ToArray();
         var wardens = state.Wardens.ToBuilder();
+        var constructions = state.Constructions.ToList();
         var seenKeys = new HashSet<string>(StringComparer.Ordinal);
         var accepted = 0;
 
         foreach (var proposal in proposals.OrderBy(p => p.WardenId.Value, StringComparer.Ordinal).ThenBy(p => p.IdempotencyKey, StringComparer.Ordinal))
         {
-            var reason = Validate(state, wardens, proposal, seenKeys, accepted);
+            var reason = Validate(state, wardens, constructions, cells, proposal, seenKeys, accepted);
             if (reason != ProposalRejectionReason.None)
             {
                 resolutions.Add(new ProposalResolution(proposal, reason, 0));
@@ -43,7 +44,7 @@ public static class ProposalResolver
             seenKeys.Add(proposal.IdempotencyKey);
             var index = IndexOfWarden(wardens, proposal.WardenId);
             var charter = wardens[index];
-            var magnitude = Apply(proposal, cells, populations);
+            var magnitude = Apply(proposal, cells, populations, constructions);
             wardens[index] = charter.Spend(proposal.BudgetCost, proposal.Impact);
             accepted++;
             resolutions.Add(new ProposalResolution(proposal, ProposalRejectionReason.None, magnitude));
@@ -54,6 +55,7 @@ public static class ProposalResolver
             Cells = [.. cells],
             Populations = WorldGenerator.CanonicalOrder([.. populations]),
             Wardens = wardens.ToImmutable(),
+            Constructions = [.. constructions.OrderBy(c => c.CellIndex)],
         };
 
         return (newState, resolutions);
@@ -62,6 +64,8 @@ public static class ProposalResolver
     private static ProposalRejectionReason Validate(
         WorldState state,
         ImmutableArray<WardenCharter>.Builder wardens,
+        List<Construction> constructions,
+        PlanetCell[] cells,
         WardenProposal proposal,
         HashSet<string> seenKeys,
         int accepted)
@@ -129,7 +133,59 @@ public static class ProposalResolver
             return ProposalRejectionReason.ImpactCeilingReached;
         }
 
+        if (proposal.Action == WardenActionKind.Build)
+        {
+            return ValidateBuild(constructions, cells, proposal);
+        }
+
         return ProposalRejectionReason.None;
+    }
+
+    private static ProposalRejectionReason ValidateBuild(
+        List<Construction> constructions,
+        PlanetCell[] cells,
+        WardenProposal proposal)
+    {
+        if (proposal.Construction == ConstructionKind.None)
+        {
+            return ProposalRejectionReason.OutOfRange;
+        }
+
+        var cell = cells[proposal.TargetCellIndex];
+        if (!cell.IsLand)
+        {
+            return ProposalRejectionReason.OutOfRange;
+        }
+
+        var existing = FindConstruction(constructions, proposal.TargetCellIndex);
+        if (existing >= 0)
+        {
+            var standing = constructions[existing];
+
+            // One structure per cell, and only its own kind can be built up further.
+            if (standing.Kind != proposal.Construction || standing.Level >= Construction.MaxLevel)
+            {
+                return ProposalRejectionReason.OutOfRange;
+            }
+        }
+
+        var level = existing >= 0 ? constructions[existing].Level + 1 : 1;
+        return cell.Resources.Covers(Construction.CostFor(proposal.Construction, level))
+            ? ProposalRejectionReason.None
+            : ProposalRejectionReason.InsufficientResources;
+    }
+
+    private static int FindConstruction(List<Construction> constructions, int cellIndex)
+    {
+        for (var i = 0; i < constructions.Count; i++)
+        {
+            if (constructions[i].CellIndex == cellIndex)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static int IndexOfWarden(ImmutableArray<WardenCharter>.Builder wardens, WardenId id)
@@ -145,7 +201,11 @@ public static class ProposalResolver
         return -1;
     }
 
-    private static int Apply(WardenProposal proposal, PlanetCell[] cells, SpeciesPopulation[] populations)
+    private static int Apply(
+        WardenProposal proposal,
+        PlanetCell[] cells,
+        SpeciesPopulation[] populations,
+        List<Construction> constructions)
     {
         var cell = cells[proposal.TargetCellIndex];
         switch (proposal.Action)
@@ -174,9 +234,41 @@ public static class ProposalResolver
             case WardenActionKind.Hunt:
                 return AdjustPopulations(populations, proposal, p => p.WithPopulation(p.Population - (p.Population / 50)));
 
+            case WardenActionKind.Build:
+                return Build(proposal, cells, constructions);
+
             default:
                 return 0;
         }
+    }
+
+    /// <summary>
+    /// Raises a new construction or adds a level to the one already standing, paying for it out of the
+    /// target cell's own stock. Validation has already established that the stock covers the cost.
+    /// </summary>
+    private static int Build(WardenProposal proposal, PlanetCell[] cells, List<Construction> constructions)
+    {
+        var existing = FindConstruction(constructions, proposal.TargetCellIndex);
+        var level = existing >= 0 ? constructions[existing].Level + 1 : 1;
+        var cell = cells[proposal.TargetCellIndex];
+
+        if (!cell.Resources.TrySpend(Construction.CostFor(proposal.Construction, level), out var remaining))
+        {
+            return 0;
+        }
+
+        cells[proposal.TargetCellIndex] = cell with { Resources = remaining };
+
+        if (existing >= 0)
+        {
+            constructions[existing] = constructions[existing].Upgrade();
+        }
+        else
+        {
+            constructions.Add(Construction.Raise(proposal.TargetCellIndex, proposal.Construction));
+        }
+
+        return level;
     }
 
     private static int AdjustPopulations(

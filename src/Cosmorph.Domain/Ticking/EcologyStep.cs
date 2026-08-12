@@ -20,7 +20,7 @@ public static class EcologyStep
     public const int MigrationPermille = 120;
     public const int PopulationMilestoneStep = 10_000;
 
-    public static (ImmutableArray<PlanetCell> Cells, ImmutableArray<SpeciesPopulation> Populations, List<EcologySignal> Signals)
+    public static (ImmutableArray<PlanetCell> Cells, ImmutableArray<SpeciesPopulation> Populations, ImmutableArray<Construction> Constructions, List<EcologySignal> Signals)
         Advance(WorldState state, long tick)
     {
         var topology = state.Topology;
@@ -30,17 +30,62 @@ public static class EcologyStep
         var cells = state.Cells.ToArray();
         var signals = new List<EcologySignal>();
 
-        UpdateClimateAndStress(state, topology, cells, day, tick, signals);
+        var constructions = WeatherConstructions(state, signals);
+        var constructionByCell = IndexByCell(constructions, cells.Length);
 
-        var populations = ResolveSpecies(state, topology, content, cells, tick, signals);
+        UpdateClimateAndStress(state, topology, cells, constructionByCell, day, tick, signals);
 
-        return ([.. cells], populations, signals);
+        var populations = ResolveSpecies(state, topology, content, cells, constructionByCell, tick, signals);
+
+        return ([.. cells], populations, [.. constructions], signals);
+    }
+
+    /// <summary>
+    /// Ages every construction by one tick and drops the ones that have worn away. Runs before the
+    /// climate step so a structure that fails this tick no longer shelters the cell this tick.
+    /// </summary>
+    private static List<Construction> WeatherConstructions(WorldState state, List<EcologySignal> signals)
+    {
+        var standing = new List<Construction>(state.Constructions.Length);
+        foreach (var construction in state.Constructions)
+        {
+            var weathered = construction.Weather();
+            if (weathered.IsStanding)
+            {
+                standing.Add(weathered);
+                continue;
+            }
+
+            signals.Add(new EcologySignal(
+                WorldEventType.ConstructionLost,
+                construction.CellIndex,
+                null,
+                (int)construction.Kind));
+        }
+
+        return standing;
+    }
+
+    /// <summary>Cell-index lookup into the standing constructions. A cell holds at most one.</summary>
+    private static Construction?[] IndexByCell(List<Construction> constructions, int cellCount)
+    {
+        var byCell = new Construction?[cellCount];
+        foreach (var construction in constructions)
+        {
+            if (construction.CellIndex >= 0 && construction.CellIndex < cellCount)
+            {
+                byCell[construction.CellIndex] = construction;
+            }
+        }
+
+        return byCell;
     }
 
     private static void UpdateClimateAndStress(
         WorldState state,
         ICellTopology topology,
         PlanetCell[] cells,
+        Construction?[] constructionByCell,
         long day,
         long tick,
         List<EcologySignal> signals)
@@ -52,18 +97,22 @@ public static class EcologyStep
             var moisture = Climate.MoisturePermille(state.Seed, topology, previous, day, state.DaysPerYear);
             var capacity = WorldGenerator.CarryingCapacity(previous.Biome, temperature, moisture);
 
+            var construction = constructionByCell[index];
+            capacity = Math.Min(PlanetCell.MaxBiomass, capacity + (capacity * (construction?.CapacityBonusPermille ?? 0) / 1000));
+            var weatherRelief = construction?.WeatherReliefPermille ?? 0;
+
             var stress = previous.Stress.Decay(25);
 
             if (previous.IsLand)
             {
                 if (moisture.Value < 260)
                 {
-                    stress = stress with { Drought = stress.Drought.Add((260 - moisture.Value) / 2) };
+                    stress = stress with { Drought = stress.Drought.Add(Damp((260 - moisture.Value) / 2, weatherRelief)) };
                 }
 
                 if (moisture.Value > 860)
                 {
-                    stress = stress with { Flood = stress.Flood.Add((moisture.Value - 860) * 2) };
+                    stress = stress with { Flood = stress.Flood.Add(Damp((moisture.Value - 860) * 2, weatherRelief)) };
                 }
 
                 var fireRisk = temperature > 260 && moisture.Value < 240 && capacity > 0
@@ -91,10 +140,16 @@ public static class EcologyStep
                 Biomass = Math.Clamp(biomass, 0, Math.Min(PlanetCell.MaxBiomass, Math.Max(capacity, 1))),
             };
 
+            updated = updated with { Resources = updated.Resources.Add(CellResources.YieldPerTick(updated)) };
+
             cells[index] = updated;
             EmitStressSignals(previous, updated, signals);
         }
     }
+
+    /// <summary>Removes a permille share of an accruing stress, used by windbreaks.</summary>
+    private static int Damp(int amount, int reliefPermille) =>
+        amount - (amount * Math.Clamp(reliefPermille, 0, 1000) / 1000);
 
     private static int GrowBiomass(PlanetCell cell, int temperature, Permille moisture, int capacity, CellStress stress)
     {
@@ -138,6 +193,7 @@ public static class EcologyStep
         ICellTopology topology,
         ContentPack content,
         PlanetCell[] cells,
+        Construction?[] constructionByCell,
         long tick,
         List<EcologySignal> signals)
     {
@@ -175,6 +231,10 @@ public static class EcologyStep
                 ? population.Traits.ColdTolerance / 4
                 : population.Traits.DroughtTolerance / 4;
             var strain = Math.Max(0, ((temperatureStrain * 2) + moistureStrain + (cell.Stress.Total / 4)) - toleranceRelief);
+
+            // A shelter on the cell absorbs a share of whatever strain is left.
+            var shelter = constructionByCell[population.CellIndex]?.StrainReliefPermille ?? 0;
+            strain -= strain * shelter / 1000;
 
             var starving = false;
             switch (definition.Archetype)

@@ -43,13 +43,14 @@ public static class TickEngine
         }
 
         var tick = state.Tick.Next();
-        var (cells, populations, signals) = EcologyStep.Advance(state, tick.Value);
+        var (cells, populations, constructions, signals) = EcologyStep.Advance(state, tick.Value);
 
         var advanced = state with
         {
             Tick = tick,
             Cells = cells,
             Populations = populations,
+            Constructions = constructions,
             Version = checked(state.Version + 1),
         };
 
@@ -71,7 +72,7 @@ public static class TickEngine
                 result,
                 ++sequence,
                 tick.Value,
-                resolution.Accepted ? WorldEventType.WardenAction : WorldEventType.WardenProposalRejected,
+                EventTypeFor(resolution),
                 resolution.Proposal.TargetCellIndex,
                 resolution.Proposal.TargetSpecies,
                 resolution.Accepted ? resolution.AppliedMagnitude : (int)resolution.Rejection,
@@ -265,6 +266,22 @@ public static class TickEngine
 
         var worldEvent = CreateEvent(result, sequence, tick.Value, WorldEventType.TimeCompressed, null, null, (int)Math.Min(int.MaxValue, ticks), null);
         return (result, [worldEvent]);
+    }
+
+    /// <summary>
+    /// Raising a structure gets its own Chronicle type so spectators can tell it apart from the other
+    /// things a Warden does. A rejected proposal is always reported as a rejection.
+    /// </summary>
+    private static WorldEventType EventTypeFor(ProposalResolution resolution)
+    {
+        if (!resolution.Accepted)
+        {
+            return WorldEventType.WardenProposalRejected;
+        }
+
+        return resolution.Proposal.Action == WardenActionKind.Build
+            ? WorldEventType.ConstructionRaised
+            : WorldEventType.WardenAction;
     }
 
     private static IEnumerable<EcologySignal> RankSignals(IReadOnlyList<EcologySignal> signals) =>

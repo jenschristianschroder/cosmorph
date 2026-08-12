@@ -28,6 +28,27 @@ public sealed record CellColumns
     public required int[] Fire { get; init; }
 
     public required int[] Flood { get; init; }
+
+    /// <summary>
+    /// Material stocks. Nullable because a stored <c>world-snapshot/1</c> document predates them; a
+    /// world loaded without them simply starts from an empty stock and refills on the next tick.
+    /// </summary>
+    public int[]? Timber { get; init; }
+
+    public int[]? Stone { get; init; }
+
+    public int[]? Fibre { get; init; }
+}
+
+public sealed record ConstructionDocument
+{
+    public required int CellIndex { get; init; }
+
+    public required int Kind { get; init; }
+
+    public required int Level { get; init; }
+
+    public required int ConditionPermille { get; init; }
 }
 
 public sealed record PopulationDocument
@@ -75,7 +96,10 @@ public sealed record WardenDocument
 /// <summary>Persisted snapshot document with an explicit schema version.</summary>
 public sealed record SnapshotDocument
 {
-    public const string CurrentSchema = "world-snapshot/1";
+    public const string CurrentSchema = "world-snapshot/2";
+
+    /// <summary>The schema written before materials and constructions existed. Still readable.</summary>
+    public const string LegacySchema = "world-snapshot/1";
 
     public required string Schema { get; init; }
 
@@ -122,6 +146,12 @@ public sealed record SnapshotDocument
     public required PopulationDocument[] Populations { get; init; }
 
     public required WardenDocument[] Wardens { get; init; }
+
+    /// <summary>
+    /// Standing constructions. Not required, so a stored <c>world-snapshot/1</c> document still binds
+    /// under <c>UnmappedMemberHandling.Disallow</c>.
+    /// </summary>
+    public ConstructionDocument[] Constructions { get; init; } = [];
 }
 
 /// <summary>Converts between the domain world state and its persisted document.</summary>
@@ -143,6 +173,9 @@ public static class SnapshotCodec
             Disease = new int[count],
             Fire = new int[count],
             Flood = new int[count],
+            Timber = new int[count],
+            Stone = new int[count],
+            Fibre = new int[count],
         };
 
         for (var i = 0; i < count; i++)
@@ -158,6 +191,9 @@ public static class SnapshotCodec
             columns.Disease[i] = cell.Stress.Disease.Value;
             columns.Fire[i] = cell.Stress.Fire.Value;
             columns.Flood[i] = cell.Stress.Flood.Value;
+            columns.Timber![i] = cell.Resources.Timber;
+            columns.Stone![i] = cell.Resources.Stone;
+            columns.Fibre![i] = cell.Resources.Fibre;
         }
 
         return new SnapshotDocument
@@ -194,13 +230,21 @@ public static class SnapshotCodec
                 DroughtTolerance = p.Traits.DroughtTolerance,
             })],
             Wardens = [.. state.Wardens.Select(ToDocument)],
+            Constructions = [.. state.Constructions.Select(c => new ConstructionDocument
+            {
+                CellIndex = c.CellIndex,
+                Kind = (int)c.Kind,
+                Level = c.Level,
+                ConditionPermille = c.Condition.Value,
+            })],
         };
     }
 
     public static WorldState ToState(SnapshotDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        if (!string.Equals(document.Schema, SnapshotDocument.CurrentSchema, StringComparison.Ordinal))
+        if (!string.Equals(document.Schema, SnapshotDocument.CurrentSchema, StringComparison.Ordinal)
+            && !string.Equals(document.Schema, SnapshotDocument.LegacySchema, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"Unsupported snapshot schema '{document.Schema}'.");
         }
@@ -226,7 +270,11 @@ public static class SnapshotCodec
                     new Permille(document.Cells.Drought[i]),
                     new Permille(document.Cells.Disease[i]),
                     new Permille(document.Cells.Fire[i]),
-                    new Permille(document.Cells.Flood[i]))));
+                    new Permille(document.Cells.Flood[i])),
+                new CellResources(
+                    At(document.Cells.Timber, i),
+                    At(document.Cells.Stone, i),
+                    At(document.Cells.Fibre, i))));
         }
 
         return new WorldState
@@ -260,10 +308,25 @@ public static class SnapshotCodec
                     new AdaptationTraits(p.ColdTolerance, p.DroughtTolerance)))
             ],
             Wardens = [.. document.Wardens.Select(ToCharter)],
+            Constructions =
+            [
+                .. document.Constructions
+                    .Where(c => c.CellIndex >= 0 && c.CellIndex < topology.CellCount)
+                    .OrderBy(c => c.CellIndex)
+                    .Select(c => new Construction(
+                        c.CellIndex,
+                        (ConstructionKind)c.Kind,
+                        c.Level,
+                        new Permille(c.ConditionPermille)))
+            ],
             LastEventSequence = document.LastEventSequence,
             LastSignificantTick = document.LastSignificantTick,
         };
     }
+
+    /// <summary>Reads an optional column, treating a missing or short one as zero.</summary>
+    private static int At(int[]? column, int index) =>
+        column is not null && index < column.Length ? column[index] : 0;
 
     public static WardenDocument ToDocument(WardenCharter charter)
     {

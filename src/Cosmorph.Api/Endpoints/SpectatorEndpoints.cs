@@ -74,6 +74,37 @@ public static class SpectatorEndpoints
             return Results.Ok(SpectatorMapper.ToSnapshot(state));
         });
 
+        builder.MapGet("/api/worlds/{worldId}/cells/{cellIndex:int}", async (
+            string worldId,
+            int cellIndex,
+            HttpContext context,
+            IWorldStore store,
+            CancellationToken cancellationToken) =>
+        {
+            var loaded = await LoadAsync(store, worldId, cancellationToken).ConfigureAwait(false);
+            if (loaded is not { } place)
+            {
+                return NotFound();
+            }
+
+            var (manifest, state) = place;
+            var detail = SpectatorMapper.ToCellDetail(state, cellIndex);
+            if (detail is null)
+            {
+                // An index outside the grid is answered exactly like an unknown world.
+                return NotFound();
+            }
+
+            var etag = Etag(manifest.Id, manifest.Version, string.Create(CultureInfo.InvariantCulture, $"cell{cellIndex}"));
+            if (IsNotModified(context, etag))
+            {
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            }
+
+            SetCacheHeaders(context, etag);
+            return Results.Ok(detail);
+        });
+
         builder.MapGet("/api/worlds/{worldId}/events", async (
             string worldId,
             long? after,

@@ -56,12 +56,18 @@ public sealed record SpectatorCells
     public required int[] MoisturePermille { get; init; }
 
     public required int[] PopulationPressurePermille { get; init; }
+
+    /// <summary>Combined material stock of the cell, as a share of the per-cell ceiling.</summary>
+    public required int[] ResourceRichnessPermille { get; init; }
+
+    /// <summary>The kind of construction standing on the cell, or zero for none.</summary>
+    public required int[] ConstructionKind { get; init; }
 }
 
 /// <summary>Versioned spectator snapshot polled by the Observatory.</summary>
 public sealed record SpectatorSnapshotDto
 {
-    public const string CurrentSchema = "spectator-snapshot/1";
+    public const string CurrentSchema = "spectator-snapshot/2";
 
     public required string Schema { get; init; }
 
@@ -99,6 +105,104 @@ public sealed record SpeciesTotalDto
     public required string Archetype { get; init; }
 
     public required long Population { get; init; }
+}
+
+/// <summary>One species living in a single cell, with its local condition.</summary>
+public sealed record SpeciesAtCellDto
+{
+    public required string Species { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string Archetype { get; init; }
+
+    public required int Population { get; init; }
+
+    public required int HealthPermille { get; init; }
+
+    public required int Energy { get; init; }
+
+    public required int ColdTolerance { get; init; }
+
+    public required int DroughtTolerance { get; init; }
+}
+
+/// <summary>The construction standing on a cell.</summary>
+public sealed record ConstructionDto
+{
+    public required string Kind { get; init; }
+
+    public required int Level { get; init; }
+
+    public required int ConditionPermille { get; init; }
+}
+
+/// <summary>
+/// Everything a spectator may see about one place. Fetched on demand rather than folded into the
+/// snapshot, which every viewer polls every few seconds. Carries no Warden configuration.
+/// </summary>
+public sealed record CellDetailDto
+{
+    public const string CurrentSchema = "spectator-cell/1";
+
+    public required string Schema { get; init; }
+
+    public required string WorldId { get; init; }
+
+    public required long Tick { get; init; }
+
+    public required long Version { get; init; }
+
+    public required int CellIndex { get; init; }
+
+    public required int LatitudeDegrees { get; init; }
+
+    public required int LongitudeDegrees { get; init; }
+
+    public required string Biome { get; init; }
+
+    public required bool IsLand { get; init; }
+
+    public required int Elevation { get; init; }
+
+    public required int TemperatureDeciC { get; init; }
+
+    public required int MoisturePermille { get; init; }
+
+    public required int Biomass { get; init; }
+
+    public required int CarryingCapacity { get; init; }
+
+    public required int VitalityPermille { get; init; }
+
+    public required string DominantStress { get; init; }
+
+    public required int DroughtPermille { get; init; }
+
+    public required int DiseasePermille { get; init; }
+
+    public required int FirePermille { get; init; }
+
+    public required int FloodPermille { get; init; }
+
+    public required int Timber { get; init; }
+
+    public required int Stone { get; init; }
+
+    public required int Fibre { get; init; }
+
+    public required int ResourceRichnessPermille { get; init; }
+
+    /// <summary>What the cell will add to its stock on the next tick, at the present condition.</summary>
+    public required int TimberYield { get; init; }
+
+    public required int StoneYield { get; init; }
+
+    public required int FibreYield { get; init; }
+
+    public ConstructionDto? Construction { get; init; }
+
+    public required SpeciesAtCellDto[] Species { get; init; }
 }
 
 /// <summary>A Chronicle entry as shown to spectators.</summary>
@@ -165,12 +269,22 @@ public static class SpectatorMapper
             TemperatureDeciC = new int[count],
             MoisturePermille = new int[count],
             PopulationPressurePermille = new int[count],
+            ResourceRichnessPermille = new int[count],
+            ConstructionKind = new int[count],
         };
 
         var pressure = new long[count];
         foreach (var population in state.Populations)
         {
             pressure[population.CellIndex] += population.Population;
+        }
+
+        foreach (var construction in state.Constructions)
+        {
+            if (construction.CellIndex >= 0 && construction.CellIndex < count)
+            {
+                cells.ConstructionKind[construction.CellIndex] = (int)construction.Kind;
+            }
         }
 
         for (var i = 0; i < count; i++)
@@ -192,6 +306,7 @@ public static class SpectatorMapper
             cells.MoisturePermille[i] = cell.Moisture.Value;
             var ceiling = Math.Max(1, cell.CarryingCapacity);
             cells.PopulationPressurePermille[i] = (int)Math.Clamp(pressure[i] * 1000 / ceiling, 0, 1000);
+            cells.ResourceRichnessPermille[i] = cell.Resources.Richness.Value;
         }
 
         var content = state.Content;
@@ -226,6 +341,87 @@ public static class SpectatorMapper
             LastEventSequence = state.LastEventSequence,
             Species = totals,
             Cells = cells,
+        };
+    }
+
+    /// <summary>
+    /// Projects one place. Returns null for an index outside the grid, so the endpoint can answer with
+    /// the same not-found shape it uses for an unknown world.
+    /// </summary>
+    public static CellDetailDto? ToCellDetail(WorldState state, int cellIndex)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (cellIndex < 0 || cellIndex >= state.Cells.Length)
+        {
+            return null;
+        }
+
+        var cell = state.Cells[cellIndex];
+        var topology = Domain.Grid.GridCache.Get(state.GridWidth, state.GridHeight);
+        var content = state.Content;
+        var yield = CellResources.YieldPerTick(cell);
+
+        var standing = state.Constructions.FirstOrDefault(c => c.CellIndex == cellIndex);
+        var construction = standing.IsStanding
+            ? new ConstructionDto
+            {
+                Kind = standing.Kind.ToString(),
+                Level = standing.Level,
+                ConditionPermille = standing.Condition.Value,
+            }
+            : null;
+
+        var species = state.Populations
+            .Where(p => p.CellIndex == cellIndex)
+            .OrderBy(p => p.Species.Value, StringComparer.Ordinal)
+            .Select(p =>
+            {
+                var definition = content[p.Species];
+                return new SpeciesAtCellDto
+                {
+                    Species = p.Species.Value,
+                    DisplayName = definition.DisplayName,
+                    Archetype = definition.Archetype.ToString(),
+                    Population = p.Population,
+                    HealthPermille = p.Health.Value,
+                    Energy = p.Energy,
+                    ColdTolerance = p.Traits.ColdTolerance,
+                    DroughtTolerance = p.Traits.DroughtTolerance,
+                };
+            })
+            .ToArray();
+
+        return new CellDetailDto
+        {
+            Schema = CellDetailDto.CurrentSchema,
+            WorldId = state.Id.Value,
+            Tick = state.Tick.Value,
+            Version = state.Version,
+            CellIndex = cellIndex,
+            LatitudeDegrees = topology.LatitudeDegrees(cellIndex),
+            LongitudeDegrees = topology.LongitudeDegrees(cellIndex),
+            Biome = cell.Biome.ToString(),
+            IsLand = cell.IsLand,
+            Elevation = cell.Elevation,
+            TemperatureDeciC = cell.TemperatureDeciC,
+            MoisturePermille = cell.Moisture.Value,
+            Biomass = cell.Biomass,
+            CarryingCapacity = cell.CarryingCapacity,
+            VitalityPermille = cell.Vitality.Value,
+            DominantStress = cell.Stress.Dominant.ToString(),
+            DroughtPermille = cell.Stress.Drought.Value,
+            DiseasePermille = cell.Stress.Disease.Value,
+            FirePermille = cell.Stress.Fire.Value,
+            FloodPermille = cell.Stress.Flood.Value,
+            Timber = cell.Resources.Timber,
+            Stone = cell.Resources.Stone,
+            Fibre = cell.Resources.Fibre,
+            ResourceRichnessPermille = cell.Resources.Richness.Value,
+            TimberYield = yield.Timber,
+            StoneYield = yield.Stone,
+            FibreYield = yield.Fibre,
+            Construction = construction,
+            Species = species,
         };
     }
 

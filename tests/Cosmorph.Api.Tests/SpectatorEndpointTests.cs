@@ -129,7 +129,9 @@ public sealed class SpectatorEndpointTests : IClassFixture<CosmorphApiFactory>
         var height = snapshot.GetProperty("gridHeight").GetInt32();
         Assert.Equal(width * height, snapshot.GetProperty("cells").GetProperty("biome").GetArrayLength());
         Assert.Equal(width * height, snapshot.GetProperty("cells").GetProperty("vitalityPermille").GetArrayLength());
-        Assert.Equal("spectator-snapshot/1", snapshot.GetProperty("schema").GetString());
+        Assert.Equal(width * height, snapshot.GetProperty("cells").GetProperty("resourceRichnessPermille").GetArrayLength());
+        Assert.Equal(width * height, snapshot.GetProperty("cells").GetProperty("constructionKind").GetArrayLength());
+        Assert.Equal("spectator-snapshot/2", snapshot.GetProperty("schema").GetString());
     }
 
     [Theory]

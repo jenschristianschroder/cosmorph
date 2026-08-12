@@ -88,7 +88,7 @@ public static class MutationEndpoints
                 return Problem("World not found.", StatusCodes.Status404NotFound);
             }
 
-            if (request is null || !TryBuildCharter(warden, request, out var charter))
+            if (request is null)
             {
                 return Problem("Invalid charter.", StatusCodes.Status400BadRequest);
             }
@@ -100,6 +100,15 @@ public static class MutationEndpoints
             if (manifest is not { } found || !IsOwnedBy(found.Manifest, actorId))
             {
                 return Problem("World not found.", StatusCodes.Status404NotFound);
+            }
+
+            // The world is known before the charter is built, so the region can be bounded by this
+            // world's own grid. Without that the API accepts a charter the domain later refuses, and
+            // the caller gets 202 followed by nothing happening.
+            var cellCount = found.Manifest.GridWidth * found.Manifest.GridHeight;
+            if (!TryBuildCharter(warden, request, cellCount, out var charter))
+            {
+                return Problem("Invalid charter.", StatusCodes.Status400BadRequest);
             }
 
             // The actor is resolved server-side; scope identifiers in a body are never trusted.
@@ -117,10 +126,72 @@ public static class MutationEndpoints
             return Results.Accepted($"/api/worlds/{world.Value}", new { accepted, commandId = command.CommandId });
         });
 
+        var wardens = builder.MapGet("/api/worlds/{worldId}/wardens", async (
+            string worldId,
+            HttpContext context,
+            CosmorphOptions options,
+            IWorldStore store,
+            CancellationToken cancellationToken) =>
+        {
+            if (Gate(context, authenticated, isProduction, options, out var actorId) is { } closed)
+            {
+                return closed;
+            }
+
+            if (!WorldId.TryParse(worldId, out var world))
+            {
+                return Problem("World not found.", StatusCodes.Status404NotFound);
+            }
+
+            var manifest = await store.TryGetManifestAsync(world, cancellationToken).ConfigureAwait(false);
+            if (manifest is not { } found || !IsOwnedBy(found.Manifest, actorId))
+            {
+                return Problem("World not found.", StatusCodes.Status404NotFound);
+            }
+
+            var state = await store
+                .TryLoadSnapshotAsync(found.Manifest.Id, found.Manifest.Tick, cancellationToken)
+                .ConfigureAwait(false);
+            if (state is null)
+            {
+                return Problem("World not found.", StatusCodes.Status404NotFound);
+            }
+
+            // Charters are owner-only configuration, so they are never cached by a shared proxy.
+            context.Response.Headers.CacheControl = "no-store";
+
+            var charters = state.Wardens
+                .OrderBy(w => w.Id.Value, StringComparer.Ordinal)
+                .Select(w => new CharterView
+                {
+                    WardenId = w.Id.Value,
+                    DisplayName = w.DisplayName,
+                    ControlledSpecies = w.ControlledSpecies.Value,
+                    ControlledRegion = [.. w.ControlledRegion],
+                    Goals = [.. w.Goals.Select(g => g.ToString())],
+                    GoalWeights = [.. w.GoalWeights],
+                    Taboos = [.. w.Taboos.Select(t => t.ToString())],
+                    ActionBudget = w.ActionBudget,
+                    BudgetRenewalPerChapter = w.BudgetRenewalPerChapter,
+                    ImpactCeilingPerChapter = w.ImpactCeilingPerChapter,
+                    ImpactUsedThisChapter = w.ImpactUsedThisChapter,
+                })
+                .ToArray();
+
+            return Results.Ok(new CharterList(
+                CharterList.CurrentSchema,
+                world.Value,
+                state.Version,
+                found.Manifest.GridWidth,
+                found.Manifest.GridHeight,
+                charters));
+        });
+
         if (authenticated)
         {
             create.RequireAuthorization(MutationAuthentication.PolicyName);
             charter.RequireAuthorization(MutationAuthentication.PolicyName);
+            wardens.RequireAuthorization(MutationAuthentication.PolicyName);
         }
     }
 
@@ -170,7 +241,7 @@ public static class MutationEndpoints
             && key.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
     }
 
-    private static bool TryBuildCharter(WardenId wardenId, CharterRequest request, out WardenCharter charter)
+    private static bool TryBuildCharter(WardenId wardenId, CharterRequest request, int cellCount, out WardenCharter charter)
     {
         charter = null!;
         var displayName = request.DisplayName;
@@ -188,11 +259,11 @@ public static class MutationEndpoints
             || goals.Count is 0 or > WardenCharter.MaxGoals
             || weights.Count != goals.Count
             || taboos.Count > WardenCharter.MaxTaboos
-            || region.Count > 4096
+            || region.Count is 0 || region.Count > WardenCharter.MaxRegionCells
             || goals.Any(g => !Enum.IsDefined(g))
             || taboos.Any(t => !Enum.IsDefined(t))
             || weights.Any(w => w is < 1 or > WardenCharter.MaxWeight)
-            || region.Any(c => c < 0)
+            || region.Any(c => c < 0 || c >= cellCount)
             || request.ActionBudget is < 0 or > WardenCharter.MaxBudget
             || request.BudgetRenewalPerChapter is < 0 or > WardenCharter.MaxBudget
             || request.ImpactCeilingPerChapter is < 0 or > WardenCharter.MaxImpactCeiling
@@ -222,6 +293,46 @@ public static class MutationEndpoints
 }
 
 public sealed record CreateWorldRequest(string WorldId, string Name, ulong Seed, bool IsPublic);
+
+/// <summary>
+/// A charter as returned to the world's owner. Owner-scoped: this shape never appears on the
+/// anonymous spectator surface.
+/// </summary>
+public sealed record CharterView
+{
+    public required string WardenId { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string ControlledSpecies { get; init; }
+
+    public required int[] ControlledRegion { get; init; }
+
+    public required string[] Goals { get; init; }
+
+    public required int[] GoalWeights { get; init; }
+
+    public required string[] Taboos { get; init; }
+
+    public required int ActionBudget { get; init; }
+
+    public required int BudgetRenewalPerChapter { get; init; }
+
+    public required int ImpactCeilingPerChapter { get; init; }
+
+    public required int ImpactUsedThisChapter { get; init; }
+}
+
+public sealed record CharterList(
+    string Schema,
+    string WorldId,
+    long Version,
+    int GridWidth,
+    int GridHeight,
+    IReadOnlyList<CharterView> Wardens)
+{
+    public const string CurrentSchema = "warden-charters/1";
+}
 
 public sealed record CharterRequest
 {

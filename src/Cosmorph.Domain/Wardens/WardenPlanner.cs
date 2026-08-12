@@ -46,7 +46,10 @@ public static class WardenPlanner
         }
 
         var cell = target.Value;
-        var action = SelectAction(charter, cell);
+        var construction = ChooseConstruction(state, charter, cell);
+        var action = construction == ConstructionKind.None
+            ? SelectAction(charter, cell)
+            : WardenActionKind.Build;
         if (action is null)
         {
             return null;
@@ -62,8 +65,76 @@ public static class WardenPlanner
             BudgetCost = 1,
             Impact = 2,
             IdempotencyKey = $"{state.Id.Value}:{charter.Id.Value}:{state.Tick.Value}",
+            Construction = construction,
         };
     }
+
+    /// <summary>
+    /// Picks what to build on the target cell, or <see cref="ConstructionKind.None"/> when building is
+    /// not the right move. A Warden only proposes a build it can already pay for out of the cell's own
+    /// stock, so materials — not the action budget — are what gate construction.
+    /// </summary>
+    private static ConstructionKind ChooseConstruction(WorldState state, WardenCharter charter, PlanetCell cell)
+    {
+        if (!cell.IsLand)
+        {
+            return ConstructionKind.None;
+        }
+
+        var standing = state.Constructions.FirstOrDefault(c => c.CellIndex == cell.Index);
+        var level = 1;
+        ConstructionKind kind;
+
+        if (standing.IsStanding)
+        {
+            if (standing.Level >= Construction.MaxLevel)
+            {
+                return ConstructionKind.None;
+            }
+
+            // Only the structure already there can be built up further; one per cell.
+            kind = standing.Kind;
+            level = standing.Level + 1;
+        }
+        else
+        {
+            kind = PreferredKind(charter);
+            if (kind == ConstructionKind.None)
+            {
+                return ConstructionKind.None;
+            }
+        }
+
+        return cell.Resources.Covers(Construction.CostFor(kind, level)) ? kind : ConstructionKind.None;
+    }
+
+    /// <summary>Maps the charter's highest-weighted goal to the structure that serves it.</summary>
+    private static ConstructionKind PreferredKind(WardenCharter charter)
+    {
+        foreach (var (goal, _) in OrderedGoals(charter))
+        {
+            var kind = goal switch
+            {
+                WardenGoal.Preserve => ConstructionKind.Shelter,
+                WardenGoal.Expand => ConstructionKind.Terrace,
+                WardenGoal.Adapt => ConstructionKind.Windbreak,
+                _ => ConstructionKind.None,
+            };
+
+            if (kind != ConstructionKind.None)
+            {
+                return kind;
+            }
+        }
+
+        return ConstructionKind.None;
+    }
+
+    private static IEnumerable<(WardenGoal Goal, int Weight)> OrderedGoals(WardenCharter charter) =>
+        charter.Goals
+            .Select((goal, i) => (Goal: goal, Weight: charter.GoalWeights[i]))
+            .OrderByDescending(g => g.Weight)
+            .ThenBy(g => (int)g.Goal);
 
     private static PlanetCell? SelectCell(WorldState state, WardenCharter charter)
     {
@@ -92,12 +163,7 @@ public static class WardenPlanner
 
     private static WardenActionKind? SelectAction(WardenCharter charter, PlanetCell cell)
     {
-        var ordered = charter.Goals
-            .Select((goal, i) => (Goal: goal, Weight: charter.GoalWeights[i]))
-            .OrderByDescending(g => g.Weight)
-            .ThenBy(g => (int)g.Goal);
-
-        foreach (var (goal, _) in ordered)
+        foreach (var (goal, _) in OrderedGoals(charter))
         {
             var candidate = goal switch
             {

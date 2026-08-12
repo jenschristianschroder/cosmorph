@@ -1,3 +1,4 @@
+using Cosmorph.Domain.Ecology;
 using Cosmorph.Domain.Worlds;
 
 namespace Cosmorph.Domain.Wardens;
@@ -11,12 +12,15 @@ public enum WardenActionKind
     SeekSymbiosis = 3,
     Hunt = 4,
     AdaptTrait = 5,
+
+    /// <summary>Spends the target cell's materials on a construction. Added in warden-actions/2.</summary>
+    Build = 6,
 }
 
 /// <summary>A bounded, structured proposal. The engine validates it and may reject it.</summary>
 public sealed record WardenProposal
 {
-    public const string GrammarVersion = "warden-actions/1";
+    public const string GrammarVersion = "warden-actions/2";
 
     public required WardenId WardenId { get; init; }
 
@@ -36,6 +40,9 @@ public sealed record WardenProposal
 
     /// <summary>Stable identifier used to make repeated submissions idempotent.</summary>
     public required string IdempotencyKey { get; init; }
+
+    /// <summary>What to raise. Only meaningful when <see cref="Action"/> is <see cref="WardenActionKind.Build"/>.</summary>
+    public ConstructionKind Construction { get; init; }
 }
 
 /// <summary>Why a proposal was rejected. Rejections never mutate world state.</summary>
@@ -51,4 +58,5 @@ public enum ProposalRejectionReason
     UnknownSpecies = 7,
     Duplicate = 8,
     OutOfRange = 9,
+    InsufficientResources = 10,
 }

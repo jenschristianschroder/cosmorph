@@ -13,7 +13,8 @@ public readonly record struct PlanetCell(
     Permille Moisture,
     int Biomass,
     int CarryingCapacity,
-    CellStress Stress)
+    CellStress Stress,
+    CellResources Resources = default)
 {
     public const int MaxBiomass = 100_000;
     public const int MinTemperatureDeciC = -900;

@@ -9,7 +9,7 @@ namespace Cosmorph.Domain.Worlds;
 /// <summary>Immutable, isolated state of exactly one world.</summary>
 public sealed record WorldState
 {
-    public const string CurrentSimulationVersion = "sim/1.0.0";
+    public const string CurrentSimulationVersion = "sim/1.1.0";
 
     public required WorldId Id { get; init; }
 
@@ -52,6 +52,12 @@ public sealed record WorldState
     public required ImmutableArray<SpeciesPopulation> Populations { get; init; }
 
     public required ImmutableArray<WardenCharter> Wardens { get; init; }
+
+    /// <summary>
+    /// Standing constructions, in cell-index order, at most one per cell. Deliberately not required:
+    /// a world stored before constructions existed loads with none, exactly as it should.
+    /// </summary>
+    public ImmutableArray<Construction> Constructions { get; init; } = [];
 
     public required long LastEventSequence { get; init; }
 

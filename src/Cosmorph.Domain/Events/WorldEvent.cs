@@ -20,6 +20,8 @@ public enum WorldEventType
     WorldmindFallback = 12,
     TimeCompressed = 13,
     ChapterClosed = 14,
+    ConstructionRaised = 15,
+    ConstructionLost = 16,
 }
 
 /// <summary>

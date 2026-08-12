@@ -34,6 +34,9 @@ public sealed record WardenCharter
     public const int MaxImpactCeiling = 100;
     public const int MaxDisplayNameLength = 40;
 
+    /// <summary>Ceiling on the controlled region, so a Warden governs a place rather than a planet.</summary>
+    public const int MaxRegionCells = 512;
+
     public required WardenId Id { get; init; }
 
     /// <summary>Untrusted descriptive label. Never used as an instruction and always encoded on output.</summary>
@@ -117,7 +120,7 @@ public sealed record WardenCharter
             return "Taboos must be distinct and bounded.";
         }
 
-        if (ControlledRegion.Count is 0 or > 512)
+        if (ControlledRegion.Count is 0 || ControlledRegion.Count > MaxRegionCells)
         {
             return "The controlled region must contain one to 512 cells.";
         }
