@@ -1,8 +1,17 @@
-import { describe, expect, it } from 'vitest'
-import { challengeFor, displayNameFrom, parseAuthConfig, randomString } from './entra'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  challengeFor,
+  completeSignIn,
+  displayNameFrom,
+  hasSignInResponse,
+  parseAuthConfig,
+  randomString,
+} from './entra'
 
 const tenantId = '00000000-0000-0000-0000-0000000000aa'
 const clientId = '00000000-0000-0000-0000-0000000000bb'
+const config = { tenantId, clientId, scope: 'api://x/World.Write' }
+const PENDING_KEY = 'cosmorph.signin.pending'
 
 describe('parseAuthConfig', () => {
   it('accepts the configuration the API publishes', () => {
@@ -79,3 +88,93 @@ describe('the PKCE challenge', () => {
     expect(randomString(64)).not.toBe(verifier)
   })
 })
+
+describe('hasSignInResponse', () => {
+  afterEach(() => window.history.replaceState(null, '', '/'))
+
+  it('is true only on the way back from the directory', () => {
+    expect(hasSignInResponse()).toBe(false)
+
+    window.history.replaceState(null, '', '/?code=abc&state=xyz')
+    expect(hasSignInResponse()).toBe(true)
+
+    window.history.replaceState(null, '', '/?error=access_denied')
+    expect(hasSignInResponse()).toBe(true)
+  })
+})
+
+describe('completeSignIn', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+    window.history.replaceState(null, '', '/')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState(null, '', '/')
+  })
+
+  it('redeems the code with the configuration stored when sign-in began', async () => {
+    // Nothing here reads /api/config. That is the point: the container can take seconds to answer
+    // when it is cold, and the code must not sit unredeemed while a "Sign in" button invites a
+    // second round trip that would throw it away.
+    startedSignIn('state-1')
+    window.history.replaceState(null, '', '/?code=the-code&state=state-1')
+    const requests = captureTokenRequest()
+
+    const session = await completeSignIn()
+
+    expect(session?.accessToken).toBe('an-access-token')
+    expect(session?.account).toBe('Ada Lovelace')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe(
+      `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    )
+    expect(requests[0]?.body).toContain('code=the-code')
+    expect(requests[0]?.body).toContain('code_verifier=a-verifier')
+    // The address bar is cleared so a reload cannot replay the code.
+    expect(window.location.search).toBe('')
+  })
+
+  it('returns null on an ordinary page load, so start-up can always call it', async () => {
+    expect(await completeSignIn()).toBeNull()
+  })
+
+  it('refuses a response that does not match the request this tab started', async () => {
+    startedSignIn('state-1')
+    window.history.replaceState(null, '', '/?code=the-code&state=somewhere-else')
+
+    await expect(completeSignIn()).rejects.toThrow('Sign-in could not be verified.')
+  })
+
+  it('refuses a response with no pending request at all', async () => {
+    window.history.replaceState(null, '', '/?code=the-code&state=state-1')
+
+    await expect(completeSignIn()).rejects.toThrow('Sign-in could not be verified.')
+  })
+})
+
+/** Puts the browser in the state `beginSignIn` leaves behind before it navigates away. */
+function startedSignIn(state: string): void {
+  sessionStorage.setItem(
+    PENDING_KEY,
+    JSON.stringify({ verifier: 'a-verifier', state, config }),
+  )
+}
+
+function captureTokenRequest(): { url: string; body: string }[] {
+  const requests: { url: string; body: string }[] = []
+  vi.stubGlobal('fetch', (url: unknown, init: { body?: unknown }) => {
+    requests.push({ url: String(url), body: String(init.body) })
+    return Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          access_token: 'an-access-token',
+          expires_in: 3600,
+          id_token: tokenFor({ name: 'Ada Lovelace' }),
+        }),
+    })
+  })
+  return requests
+}

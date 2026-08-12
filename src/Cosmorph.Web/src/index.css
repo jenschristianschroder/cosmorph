@@ -126,7 +126,12 @@ body,
   width: auto;
 }
 
-.new-world .badge,
+/* Sign-in messages sit on a line of their own so they never squeeze the buttons off the header. */
+.signin .badge {
+  flex-basis: 100%;
+  text-align: right;
+}
+
 .new-world .explanation {
   flex-basis: 100%;
   margin: 0;

@@ -28,6 +28,18 @@ export interface Session {
 }
 
 /**
+ * The half of a sign-in that has to survive the round trip to the directory. It carries the
+ * configuration as well as the proof keys so that redeeming the code needs nothing from the API:
+ * a container that is cold can take seconds to answer, and the code must not sit unredeemed for
+ * that long with a "Sign in" button on screen inviting a second round trip.
+ */
+interface PendingSignIn {
+  readonly verifier: string
+  readonly state: string
+  readonly config: AuthConfig
+}
+
+/**
  * Reads the non-secret client configuration the API publishes. A response without an auth block
  * means sign-in is not configured, which is the ordinary local-development state.
  */
@@ -72,7 +84,8 @@ export function redirectUri(): string {
 export async function beginSignIn(config: AuthConfig): Promise<void> {
   const verifier = randomString(64)
   const state = randomString(32)
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify({ verifier, state }))
+  const pending: PendingSignIn = { verifier, state, config }
+  sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending))
 
   const url = new URL(`${AUTHORITY}/${config.tenantId}/oauth2/v2.0/authorize`)
   url.searchParams.set('client_id', config.clientId)
@@ -90,11 +103,20 @@ export async function beginSignIn(config: AuthConfig): Promise<void> {
   window.location.assign(url.toString())
 }
 
+/** True when this page load is the directory redirecting back, whether it went well or not. */
+export function hasSignInResponse(): boolean {
+  const params = new URLSearchParams(window.location.search)
+  return params.has('code') || params.has('error')
+}
+
 /**
  * Completes a redirect back from the directory. Returns null when this load is not a sign-in
  * response, so it is safe to call on every start-up.
+ *
+ * Takes no configuration: everything the token endpoint needs was stored when the sign-in began,
+ * so this can run before `/api/config` has answered.
  */
-export async function completeSignIn(config: AuthConfig): Promise<Session | null> {
+export async function completeSignIn(): Promise<Session | null> {
   const params = new URLSearchParams(window.location.search)
   const code = params.get('code')
   const error = params.get('error')
@@ -115,6 +137,7 @@ export async function completeSignIn(config: AuthConfig): Promise<Session | null
     throw new Error('Sign-in could not be verified.')
   }
 
+  const { config } = pending
   const body = new URLSearchParams({
     client_id: config.clientId,
     grant_type: 'authorization_code',
@@ -184,15 +207,19 @@ export function clearSession(): void {
   sessionStorage.removeItem(PENDING_KEY)
 }
 
-function readPending(): { verifier: string; state: string } | null {
+function readPending(): PendingSignIn | null {
   const raw = sessionStorage.getItem(PENDING_KEY)
   if (raw === null) {
     return null
   }
 
   try {
-    const { verifier, state } = JSON.parse(raw) as Record<string, unknown>
-    return typeof verifier === 'string' && typeof state === 'string' ? { verifier, state } : null
+    const { verifier, state, config } = JSON.parse(raw) as Record<string, unknown>
+    const parsed = parseAuthConfig({ auth: config })
+    if (typeof verifier !== 'string' || typeof state !== 'string' || parsed === null) {
+      return null
+    }
+    return { verifier, state, config: parsed }
   } catch {
     return null
   }

@@ -32,7 +32,9 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
 
       const accessToken = token()
       if (accessToken === null) {
-        setFailure('Your session has expired. Sign in again.')
+        // Asking for the token is also what notices the hour has run out, so by the time this is
+        // on screen the header has already gone back to offering "Sign in".
+        setFailure('Your session has expired. Sign in again to create the world.')
         return
       }
 
@@ -54,13 +56,20 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
     [isPublic, name, onWorldCreated, seed, token, worldId],
   )
 
-  if (!auth.available) {
+  // Nothing is rendered when the API reports no sign-in, which is the ordinary local-development
+  // state. A sign-in already in flight counts as reason enough to show the control, so a slow
+  // `/api/config` cannot make the header flicker back to nothing after a successful redirect.
+  if (!auth.available && !auth.completing && !signedIn) {
     return null
   }
 
   return (
     <div className="signin">
-      {signedIn ? (
+      {auth.completing ? (
+        <button type="button" disabled>
+          Signing in…
+        </button>
+      ) : signedIn ? (
         <>
           <span className="signin-account">{auth.account ?? 'Signed in'}</span>
           <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
@@ -71,7 +80,7 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
           </button>
         </>
       ) : (
-        <button type="button" onClick={auth.signIn}>
+        <button type="button" onClick={auth.signIn} disabled={!auth.available}>
           Sign in
         </button>
       )}
@@ -79,6 +88,16 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
       {auth.error !== null && (
         <p className="badge badge-warning" role="alert">
           {auth.error}
+        </p>
+      )}
+
+      {/*
+        Outside the form on purpose: an expired session closes the form, and the sentence explaining
+        why has to outlive it or the form simply vanishes.
+      */}
+      {failure !== null && (
+        <p className="badge badge-warning" role="alert">
+          {failure}
         </p>
       )}
 
@@ -122,11 +141,6 @@ export function SignInPanel({ auth, onWorldCreated }: SignInPanelProps): React.R
           <button type="submit" disabled={busy || !isValidWorldId(worldId)}>
             {busy ? 'Creating…' : 'Create world'}
           </button>
-          {failure !== null && (
-            <p className="badge badge-warning" role="alert">
-              {failure}
-            </p>
-          )}
           <p className="explanation">
             The identifier is lower-case letters, digits and hyphens, three to forty characters, and
             appears in the address. Only you can configure this world&rsquo;s Wardens.
