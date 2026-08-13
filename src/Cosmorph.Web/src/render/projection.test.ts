@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   cellToLatLon,
+  cellToPoint,
   cellToUv,
   rotationForLongitude,
   tiltForLatitude,
   uvToCell,
+  uvToPoint,
 } from './projection'
 
 const WIDTH = 4
@@ -83,5 +85,76 @@ describe('aiming the camera', () => {
     expect(tiltForLatitude(45)).toBeCloseTo(Math.PI / 4, 10)
     expect(tiltForLatitude(90)).toBe(1)
     expect(tiltForLatitude(-90)).toBe(-1)
+  })
+})
+
+/**
+ * The inverse of {@link uvToPoint}, written out here rather than shipped: nothing in the application
+ * needs it, but a projection you cannot undo is a projection you cannot check.
+ */
+function pointToUv({ x, y, z }: { x: number; y: number; z: number }): { u: number; v: number } {
+  const theta = Math.acos(Math.min(1, Math.max(-1, y)))
+  const phi = Math.atan2(z, -x)
+  return {
+    u: ((phi / (Math.PI * 2)) % 1 + 1) % 1,
+    v: 1 - theta / Math.PI,
+  }
+}
+
+describe('placing a cell on the sphere', () => {
+  it('puts v = 1 at the north pole and v = 0 at the south, whatever the longitude', () => {
+    for (const u of [0, 0.25, 0.5, 0.75, 1]) {
+      const north = uvToPoint(u, 1)
+      const south = uvToPoint(u, 0)
+
+      expect(north.y).toBeCloseTo(1, 10)
+      expect(north.x).toBeCloseTo(0, 10)
+      expect(north.z).toBeCloseTo(0, 10)
+      expect(south.y).toBeCloseTo(-1, 10)
+      expect(south.x).toBeCloseTo(0, 10)
+      expect(south.z).toBeCloseTo(0, 10)
+    }
+  })
+
+  it('starts the seam at -X, which is what the camera rotation assumes', () => {
+    // u = 0 on the equator sits at −X, and a quarter turn later at +Z. If this ever flips, labels
+    // land on the far side of the planet from the cells they name.
+    expect(uvToPoint(0, 0.5).x).toBeCloseTo(-1, 10)
+    expect(uvToPoint(0, 0.5).y).toBeCloseTo(0, 10)
+    expect(uvToPoint(0, 0.5).z).toBeCloseTo(0, 10)
+    expect(uvToPoint(0.25, 0.5).z).toBeCloseTo(1, 10)
+    expect(uvToPoint(0.5, 0.5).x).toBeCloseTo(1, 10)
+  })
+
+  it('joins the seam rather than tearing it', () => {
+    const before = uvToPoint(1, 0.4)
+    const after = uvToPoint(0, 0.4)
+
+    expect(before.x).toBeCloseTo(after.x, 10)
+    expect(before.y).toBeCloseTo(after.y, 10)
+    expect(before.z).toBeCloseTo(after.z, 10)
+  })
+
+  it('never leaves the unit sphere, so a label is always on the surface', () => {
+    for (let cellIndex = 0; cellIndex < 64 * 32; cellIndex += 37) {
+      const { x, y, z } = cellToPoint(cellIndex, 64, 32)
+      expect(Math.sqrt(x * x + y * y + z * z)).toBeCloseTo(1, 10)
+    }
+  })
+
+  it('agrees with the cell the raycaster would pick, for every cell of a real grid', () => {
+    // Project a cell centre onto the sphere, read the point back as a uv and ask which cell it is.
+    // This is exactly the round trip a click makes, so a disagreement here is a label over the
+    // wrong place.
+    for (let cellIndex = 0; cellIndex < 64 * 32; cellIndex++) {
+      const { u, v } = pointToUv(cellToPoint(cellIndex, 64, 32))
+      expect(uvToCell(u, v, 64, 32)).toBe(cellIndex)
+    }
+  })
+
+  it('places a cell exactly where its own uv does', () => {
+    const uv = cellToUv(700, 64, 32)
+
+    expect(cellToPoint(700, 64, 32)).toEqual(uvToPoint(uv.u, uv.v))
   })
 })

@@ -124,6 +124,30 @@ export async function putCharter(
   }
 }
 
+/**
+ * Takes ownership of a world nobody owns, which is what makes a world created before ownership
+ * existed configurable again. The API refuses to take a world from its owner, and answers a world
+ * owned by somebody else exactly as it answers one that does not exist.
+ */
+export async function adoptWorld(worldId: string, accessToken: string): Promise<void> {
+  const response = await fetch(`/api/worlds/${worldId}/owner`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!response.ok) {
+    // 404 and 409 both mean something specific here that the shared wording would get wrong: the
+    // first is "somebody already owns this", the second is "the tick job wrote first, try again".
+    if (response.status === 404) {
+      throw new Error('This world cannot be adopted. It already belongs to somebody else.')
+    }
+    if (response.status === 409) {
+      throw new Error('The world changed while it was being adopted. Try again.')
+    }
+    throw new Error(describeFailure(response.status, 'This world could not be adopted'))
+  }
+}
+
 /** Local check of the same bounds the API enforces, so a bad charter never becomes a round trip. */
 export function describeDraftProblem(draft: CharterDraft): string | null {
   if (draft.displayName.trim().length === 0 || draft.displayName.length > MAX_DISPLAY_NAME_LENGTH) {

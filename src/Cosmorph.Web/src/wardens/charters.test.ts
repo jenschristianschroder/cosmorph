@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
+  adoptWorld,
   describeDraftProblem,
   fetchCharters,
   parseCharterList,
@@ -131,6 +132,40 @@ describe('warden charters over the wire', () => {
     await expect(putCharter('demo-world', 'moss-keeper', draft, token)).rejects.toThrow(
       'Your session has expired. Sign in again.',
     )
+  })
+
+  it('adopts a world with the bearer token, and asks for nothing else', async () => {
+    fetchMock.mockResolvedValueOnce(response(200, { worldId: 'demo-world', adopted: true }))
+
+    await adoptWorld('demo-world', token)
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/worlds/demo-world/owner')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeUndefined()
+    expect((init.headers as Record<string, string>)['Authorization']).toBe(`Bearer ${token}`)
+  })
+
+  /*
+   * The API answers a world owned by somebody else exactly as it answers one that does not exist,
+   * so the browser must not claim to know which of the two it was.
+   */
+  it('says a world cannot be adopted rather than guessing why', async () => {
+    fetchMock.mockResolvedValueOnce(response(404))
+
+    await expect(adoptWorld('demo-world', token)).rejects.toThrow(/belongs to somebody else/)
+  })
+
+  it('explains an expired session when adopting, too', async () => {
+    fetchMock.mockResolvedValueOnce(response(401))
+
+    await expect(adoptWorld('demo-world', token)).rejects.toThrow(/session has expired/)
+  })
+
+  it('asks the reader to try again when the tick job wrote first', async () => {
+    fetchMock.mockResolvedValueOnce(response(409))
+
+    await expect(adoptWorld('demo-world', token)).rejects.toThrow(/Try again/)
   })
 })
 

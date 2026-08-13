@@ -187,11 +187,66 @@ public static class MutationEndpoints
                 charters));
         });
 
+        var adopt = builder.MapPost("/api/worlds/{worldId}/owner", async (
+            string worldId,
+            HttpContext context,
+            CosmorphOptions options,
+            IWorldStore store,
+            CancellationToken cancellationToken) =>
+        {
+            if (Gate(context, authenticated, isProduction, options, out var actorId) is { } closed)
+            {
+                return closed;
+            }
+
+            // With the flag off the route behaves as though it does not exist, so an environment that
+            // never enables adoption discloses nothing about which worlds are unowned.
+            if (!options.AllowAdoptingUnownedWorlds || !WorldId.TryParse(worldId, out var world))
+            {
+                return Problem("World not found.", StatusCodes.Status404NotFound);
+            }
+
+            // Two attempts: the manifest is rewritten by the tick job on every advance, so a lost race
+            // here is ordinary rather than exceptional and is worth one honest retry.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var manifest = await store.TryGetManifestAsync(world, cancellationToken).ConfigureAwait(false);
+                if (manifest is not { } found)
+                {
+                    return Problem("World not found.", StatusCodes.Status404NotFound);
+                }
+
+                if (IsOwnedBy(found.Manifest, actorId))
+                {
+                    // Already yours, so adopting twice is the same as adopting once.
+                    return Results.Ok(new { worldId = world.Value, adopted = true });
+                }
+
+                // Owned by somebody else is answered exactly as an unknown world is: ownership is
+                // never taken from anyone, and a stranger learns nothing by asking.
+                if (found.Manifest.OwnerId is { Length: > 0 })
+                {
+                    return Problem("World not found.", StatusCodes.Status404NotFound);
+                }
+
+                var claimed = found.Manifest with { OwnerId = actorId };
+                if (await store.TryReplaceManifestAsync(claimed, found.ConcurrencyToken, cancellationToken)
+                    .ConfigureAwait(false))
+                {
+                    return Results.Ok(new { worldId = world.Value, adopted = true });
+                }
+            }
+
+            return Problem("The world changed while it was being adopted. Try again.",
+                StatusCodes.Status409Conflict);
+        });
+
         if (authenticated)
         {
             create.RequireAuthorization(MutationAuthentication.PolicyName);
             charter.RequireAuthorization(MutationAuthentication.PolicyName);
             wardens.RequireAuthorization(MutationAuthentication.PolicyName);
+            adopt.RequireAuthorization(MutationAuthentication.PolicyName);
         }
     }
 

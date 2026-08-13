@@ -138,6 +138,25 @@ signing keys it loaded from the directory, which also settles whether the contai
 at all. Remove the variable afterwards with `--remove-env-vars`, so the running app matches what
 Bicep declares.
 
+## Adopting a world nobody owns
+
+Worlds created before ownership existed have no `ownerId`, so no account can configure their Wardens
+and the charter read answers `404` to everyone. `POST /api/worlds/{worldId}/owner` lets a signed-in
+caller take one of those, and the Observatory offers an "Adopt this world" button when the charter
+read is refused. It is off unless the environment asks for it:
+
+```bash
+gh variable set COSMORPH_ALLOW_ADOPTION --body true
+```
+
+The `deploy` workflow passes it to Bicep as `allowAdoptingUnownedWorlds`, which the API reads as the
+`Cosmorph__AllowAdoptingUnownedWorlds` container app environment variable. With it unset the route
+answers `404` as though it did not exist, so nothing is disclosed about which worlds are unowned.
+
+**Ownership is never taken from anyone**: the only transition is none → you, and a world owned by
+somebody else is answered exactly as an unknown world is. Turn the variable back off once the
+existing worlds have owners — a new world is owned by whoever created it and never needs this.
+
 ## Adding an environment
 
 A second environment (its own container app host) needs its origin added to `spa.redirectUris`; the

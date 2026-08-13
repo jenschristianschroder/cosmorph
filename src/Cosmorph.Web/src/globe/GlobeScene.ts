@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { rotationForLongitude, tiltForLatitude, uvToCell } from '../render/projection'
+import { cellToPoint, rotationForLongitude, tiltForLatitude, uvToCell } from '../render/projection'
 
 /**
  * Owns every Three.js resource for the planet. It is deliberately outside React so the animation
@@ -7,6 +7,12 @@ import { rotationForLongitude, tiltForLatitude, uvToCell } from '../render/proje
  */
 export interface GlobeOptions {
   readonly reducedMotion: boolean
+}
+
+/** A few lines of live text pinned over a cell. Anchored by cell, not by screen position. */
+export interface CellLabel {
+  readonly cellIndex: number
+  readonly lines: readonly string[]
 }
 
 const VERTEX_SHADER = `
@@ -25,6 +31,8 @@ precision mediump float;
 uniform sampler2D uState;
 uniform vec2 uGrid;
 uniform float uTime;
+uniform float uCellSnap;
+uniform vec2 uSelected;
 varying vec2 vUv;
 varying vec3 vNormal;
 
@@ -42,7 +50,13 @@ void main() {
   // pole at uv.y = 1. Flipping here rather than on the texture is deliberate: WebGL ignores
   // UNPACK_FLIP_Y_WEBGL for ArrayBufferView uploads, so texture.flipY would have no effect.
   vec2 grid = vec2(vUv.x, 1.0 - vUv.y);
-  vec4 state = texture2D(uState, grid);
+
+  // Up close the sample is pulled to the centre of its cell, so the linear filter stops smearing
+  // neighbours together and each place becomes a tile you can actually read. Far away uCellSnap is
+  // zero and the planet keeps the soft blend it has always had.
+  vec2 cellId = floor(grid * uGrid);
+  vec2 sampleUv = mix(grid, (cellId + 0.5) / uGrid, uCellSnap);
+  vec4 state = texture2D(uState, sampleUv);
   float pattern = floor(state.a * 255.0 / 60.0 + 0.5);
   vec3 color = state.rgb;
 
@@ -55,6 +69,24 @@ void main() {
   // Chunky cartoon clouds drift slowly and never hide the underlying state.
   float clouds = smoothstep(0.72, 0.95, sin(vUv.x * 22.0 + uTime * 0.05) * cos(vUv.y * 14.0 - uTime * 0.03));
   color = mix(color, vec3(1.0), clouds * 0.18);
+
+  // Distance to the nearest cell border, in cell widths: zero on the border, a half at the centre.
+  vec2 within = fract(grid * uGrid);
+  float border = min(min(within.x, 1.0 - within.x), min(within.y, 1.0 - within.y));
+
+  float edge = 1.0 - smoothstep(0.008, 0.030, border);
+  color = mix(color, color * 0.55, edge * uCellSnap * 0.85);
+
+  // The selected cell is outlined so the planet says which place the panel is describing. Columns
+  // wrap, so the seam is measured the short way round.
+  if (uSelected.x >= 0.0) {
+    float dx = abs(cellId.x - uSelected.x);
+    dx = min(dx, uGrid.x - dx);
+    if (dx < 0.5 && abs(cellId.y - uSelected.y) < 0.5) {
+      float ring = 1.0 - smoothstep(0.020, 0.075, border);
+      color = mix(color, vec3(1.0, 0.94, 0.62), ring * 0.9);
+    }
+  }
 
   float rim = pow(1.0 - abs(vNormal.z), 3.0);
   color += vec3(0.30, 0.45, 0.65) * rim * 0.35;
@@ -71,6 +103,10 @@ export class GlobeScene {
   static readonly MAX_DISTANCE = 6
   /** How close the camera moves when a place is selected. */
   static readonly FOCUS_DISTANCE = 1.8
+  /** Cells sharpen into tiles between these distances, and labels appear at the closer one. */
+  static readonly DETAIL_FAR = 2.6
+  static readonly DETAIL_NEAR = GlobeScene.FOCUS_DISTANCE
+  static readonly LABEL_DISTANCE = 2.4
 
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene: THREE.Scene
@@ -98,6 +134,12 @@ export class GlobeScene {
   private readonly raycaster = new THREE.Raycaster()
   private readonly container: HTMLElement
   private readonly clock = new THREE.Clock()
+  private readonly labelLayer: HTMLDivElement
+  private labels: readonly CellLabel[] = []
+  private labelNodes: HTMLDivElement[] = []
+  // Scratch vectors, reused every frame so the label layer allocates nothing per animation frame.
+  private readonly scratchPoint = new THREE.Vector3()
+  private readonly scratchView = new THREE.Vector3()
 
   constructor(container: HTMLElement, options: GlobeOptions) {
     this.container = container
@@ -127,11 +169,20 @@ export class GlobeScene {
         uState: { value: null },
         uGrid: { value: new THREE.Vector2(64, 32) },
         uTime: { value: 0 },
+        uCellSnap: { value: 0 },
+        uSelected: { value: new THREE.Vector2(-1, -1) },
       },
     })
 
     this.mesh = new THREE.Mesh(this.geometry, this.material)
     this.scene.add(this.mesh)
+
+    // Labels live in the DOM rather than the scene: they stay crisp at any pixel ratio and cost no
+    // draw calls. The layer is aria-hidden because the Place panel is the accessible route to this.
+    this.labelLayer = document.createElement('div')
+    this.labelLayer.className = 'globe-labels'
+    this.labelLayer.setAttribute('aria-hidden', 'true')
+    container.appendChild(this.labelLayer)
 
     this.renderer.domElement.addEventListener('pointerdown', this.onPointerDown)
     this.renderer.domElement.addEventListener('pointermove', this.onPointerMove)
@@ -152,6 +203,52 @@ export class GlobeScene {
   /** Registers the handler called when a place is clicked. Pass null to stop picking. */
   setPickHandler(handler: ((cellIndex: number) => void) | null): void {
     this.pickHandler = handler
+  }
+
+  /** Outlines a cell on the planet, so the globe shows which place the panel is describing. */
+  setSelectedCell(cellIndex: number | null): void {
+    const selected = this.material.uniforms.uSelected!.value as THREE.Vector2
+    if (cellIndex === null || cellIndex < 0 || cellIndex >= this.gridWidth * this.gridHeight) {
+      selected.set(-1, -1)
+      return
+    }
+    selected.set(cellIndex % this.gridWidth, Math.floor(cellIndex / this.gridWidth))
+  }
+
+  /**
+   * Replaces the text pinned over the planet. Nodes are recreated only when the set of cells
+   * changes; otherwise the existing nodes are rewritten, so a tick refreshes the words in place.
+   */
+  setLabels(labels: readonly CellLabel[]): void {
+    if (this.disposed) {
+      return
+    }
+
+    if (labels.length !== this.labelNodes.length) {
+      this.labelLayer.replaceChildren()
+      this.labelNodes = labels.map(() => {
+        const node = document.createElement('div')
+        node.className = 'globe-label'
+        this.labelLayer.appendChild(node)
+        return node
+      })
+    }
+
+    this.labels = labels
+    labels.forEach((label, index) => {
+      const node = this.labelNodes[index]
+      if (!node) {
+        return
+      }
+      // textContent throughout: nothing the API sends is ever parsed as markup.
+      node.replaceChildren(
+        ...label.lines.map((line) => {
+          const span = document.createElement('span')
+          span.textContent = line
+          return span
+        }),
+      )
+    })
   }
 
   /** Moves the camera in or out by a step, clamped to the readable range. */
@@ -224,6 +321,8 @@ export class GlobeScene {
     this.material.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
+    this.labelLayer.remove()
+    this.labelNodes = []
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -311,7 +410,68 @@ export class GlobeScene {
     }
 
     this.mesh.rotation.y = this.rotation
+
+    // Sharpen the cells as the camera closes in, and place the labels against the same matrices the
+    // renderer is about to use, so text can never lag a frame behind the planet under it.
+    const distance = this.camera.position.z
+    this.material.uniforms.uCellSnap!.value = THREE.MathUtils.clamp(
+      (GlobeScene.DETAIL_FAR - distance) / (GlobeScene.DETAIL_FAR - GlobeScene.DETAIL_NEAR),
+      0,
+      1,
+    )
+    this.mesh.updateMatrixWorld()
+    this.camera.updateMatrixWorld()
+    this.positionLabels(distance)
+
     this.renderer.render(this.scene, this.camera)
     this.frame = requestAnimationFrame(this.loop)
+  }
+
+  /**
+   * Moves each label over its cell. A label hides when its cell has turned away from the camera,
+   * when it falls outside the viewport, or when the camera is too far out for the text to mean
+   * anything — so labels arrive as you zoom in and never crowd the whole planet.
+   */
+  private positionLabels(distance: number): void {
+    if (this.labelNodes.length === 0) {
+      return
+    }
+
+    const width = this.container.clientWidth
+    const height = this.container.clientHeight
+    const tooFar = distance > GlobeScene.LABEL_DISTANCE || width <= 0 || height <= 0
+
+    for (let i = 0; i < this.labelNodes.length; i++) {
+      const node = this.labelNodes[i]
+      const label = this.labels[i]
+      if (!node || !label) {
+        continue
+      }
+      if (tooFar) {
+        node.style.display = 'none'
+        continue
+      }
+
+      const point = cellToPoint(label.cellIndex, this.gridWidth, this.gridHeight)
+      this.scratchPoint.set(point.x, point.y, point.z).applyMatrix4(this.mesh.matrixWorld)
+
+      // The mesh is a unit sphere at the origin, so the rotated point is also its own normal.
+      this.scratchView.copy(this.camera.position).sub(this.scratchPoint).normalize()
+      if (this.scratchPoint.dot(this.scratchView) <= 0.15) {
+        node.style.display = 'none'
+        continue
+      }
+
+      this.scratchPoint.project(this.camera)
+      if (Math.abs(this.scratchPoint.x) > 1 || Math.abs(this.scratchPoint.y) > 1) {
+        node.style.display = 'none'
+        continue
+      }
+
+      const x = (this.scratchPoint.x * 0.5 + 0.5) * width
+      const y = (-this.scratchPoint.y * 0.5 + 0.5) * height
+      node.style.display = 'block'
+      node.style.transform = `translate(-50%, -50%) translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`
+    }
   }
 }

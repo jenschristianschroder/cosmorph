@@ -1,11 +1,11 @@
 import {
-  parseCellDetail,
   parseEventPage,
+  parseNeighbourhood,
   parseSnapshot,
   parseWorldList,
   parseWorldSummary,
-  type CellDetail,
   type EventPage,
+  type Neighbourhood,
   type SpectatorSnapshot,
   type WorldList,
   type WorldSummary,
@@ -106,18 +106,27 @@ function assertWorldId(worldId: string): void {
 }
 
 /**
- * Reads one place. Anonymous like the rest of the spectator surface, and fetched only when a cell is
- * selected rather than on the snapshot poll, because per-cell species would bloat every poll.
+ * Reads a place and the places around it. Anonymous like the rest of the spectator surface, and
+ * fetched only when a cell is selected rather than on the snapshot poll, because per-cell species
+ * would bloat every poll for every viewer. The block contains the centre, so this is the only read
+ * an open inspector needs.
  */
-export async function fetchCellDetail(
+export async function fetchNeighbourhood(
   worldId: string,
   cellIndex: number,
+  radius: number,
   signal: AbortSignal,
-): Promise<CellDetail> {
+): Promise<Neighbourhood> {
   assertWorldId(worldId)
   const index = Math.max(0, Math.trunc(cellIndex))
-  return parseCellDetail(await getJson(`/api/worlds/${worldId}/cells/${index}`, signal))
+  const reach = Math.min(MAX_NEIGHBOURHOOD_RADIUS, Math.max(0, Math.trunc(radius)))
+  return parseNeighbourhood(
+    await getJson(`/api/worlds/${worldId}/cells/${index}/neighbourhood?radius=${reach}`, signal),
+  )
 }
+
+/** The widest block the API will answer. A larger radius is a 400, so it is bounded here first. */
+export const MAX_NEIGHBOURHOOD_RADIUS = 2
 
 /** The largest seed that survives a JSON round trip without losing precision. */
 export const MAX_SEED = Number.MAX_SAFE_INTEGER

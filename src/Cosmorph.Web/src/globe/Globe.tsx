@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { SpectatorSnapshot } from '../api/dto'
 import { buildTextureData } from '../render/texture'
 import type { OverlayMode } from '../render/palette'
-import { GlobeScene } from './GlobeScene'
+import { GlobeScene, type CellLabel } from './GlobeScene'
 
 export interface GlobeProps {
   readonly snapshot: SpectatorSnapshot | null
@@ -14,6 +14,10 @@ export interface GlobeProps {
   readonly focus: { readonly latitude: number; readonly longitude: number } | null
   readonly onSelectCell?: ((cellIndex: number) => void) | undefined
   readonly highlight?: ReadonlySet<number> | undefined
+  /** Outlined on the planet, so the globe shows which place the panel is describing. */
+  readonly selectedCell?: number | null | undefined
+  /** Live text pinned over cells, shown only once the camera is close enough to read it. */
+  readonly labels?: readonly CellLabel[] | undefined
 }
 
 /** Thin React wrapper. All per-frame work happens inside GlobeScene, never in React state. */
@@ -86,6 +90,15 @@ export function Globe(props: GlobeProps): React.ReactElement {
     props.colorBlindMode,
     props.highlight,
   ])
+
+  useEffect(() => {
+    // Declared after the state upload so the scene already knows the grid size it is bounded by.
+    sceneRef.current?.setSelectedCell(props.selectedCell ?? null)
+  }, [props.selectedCell, props.snapshot])
+
+  useEffect(() => {
+    sceneRef.current?.setLabels(props.labels ?? [])
+  }, [props.labels])
 
   useEffect(() => {
     if (props.focus) {

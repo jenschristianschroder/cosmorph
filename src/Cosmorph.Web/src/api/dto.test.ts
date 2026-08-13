@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseCellDetail,
   parseEventPage,
+  parseNeighbourhood,
   parseSnapshot,
   parseWorldList,
   parseWorldSummary,
@@ -236,5 +237,85 @@ describe('cell detail validation', () => {
   it('rejects a payload that is not an object at all', () => {
     expect(() => parseCellDetail(null)).toThrow()
     expect(() => parseCellDetail('spectator-cell/1')).toThrow()
+  })
+})
+
+const validNeighbourhood = {
+  schema: 'spectator-neighbourhood/1',
+  worldId: 'demo-world',
+  tick: 5,
+  version: 2,
+  centerCellIndex: 4,
+  radius: 1,
+  rows: 3,
+  columns: 3,
+  gridWidth: 64,
+  gridHeight: 32,
+  cells: Array.from({ length: 9 }, (_, index) => ({ ...validCellDetail, cellIndex: index })),
+}
+
+describe('neighbourhood validation', () => {
+  it('accepts a well-formed block and keeps it in the order it arrived', () => {
+    const block = parseNeighbourhood(validNeighbourhood)
+
+    expect(block.rows).toBe(3)
+    expect(block.columns).toBe(3)
+    expect(block.cells).toHaveLength(9)
+    expect(block.cells.map((cell) => cell.cellIndex)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+    expect(block.cells[4]?.cellIndex).toBe(block.centerCellIndex)
+  })
+
+  it('reads the centre alone, which is what radius 0 gives', () => {
+    const block = parseNeighbourhood({
+      ...validNeighbourhood,
+      radius: 0,
+      rows: 1,
+      columns: 1,
+      cells: [validCellDetail],
+    })
+
+    expect(block.cells).toHaveLength(1)
+  })
+
+  it('rejects an unknown schema version', () => {
+    expect(() =>
+      parseNeighbourhood({ ...validNeighbourhood, schema: 'spectator-neighbourhood/9' }),
+    ).toThrow()
+  })
+
+  it('rejects a layout that does not account for its cells', () => {
+    expect(() => parseNeighbourhood({ ...validNeighbourhood, rows: 2 })).toThrow()
+    expect(() => parseNeighbourhood({ ...validNeighbourhood, rows: 0, columns: 0 })).toThrow()
+  })
+
+  /*
+   * The API offers at most 25 places. A larger block is refused rather than truncated: the browser
+   * cannot lay out what it does not have, and a hostile payload should not be able to flood the DOM
+   * one card at a time.
+   */
+  it('rejects a block larger than the API offers', () => {
+    expect(() =>
+      parseNeighbourhood({
+        ...validNeighbourhood,
+        rows: 7,
+        columns: 7,
+        cells: Array.from({ length: 49 }, () => validCellDetail),
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a block holding something that is not a place', () => {
+    const cells = [...validNeighbourhood.cells]
+    cells[3] = { ...validCellDetail, biome: 42 } as unknown as typeof validCellDetail
+
+    expect(() => parseNeighbourhood({ ...validNeighbourhood, cells })).toThrow()
+    expect(() =>
+      parseNeighbourhood({ ...validNeighbourhood, cells: Array.from({ length: 9 }, () => 'a place') }),
+    ).toThrow()
+  })
+
+  it('rejects a payload carrying no cells at all', () => {
+    expect(() => parseNeighbourhood({ ...validNeighbourhood, cells: undefined })).toThrow()
+    expect(() => parseNeighbourhood(null)).toThrow()
   })
 })

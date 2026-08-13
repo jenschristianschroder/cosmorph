@@ -144,4 +144,106 @@ public sealed class SpectatorMapperTests
         Assert.Null(dto.LatitudeDegrees);
         Assert.Null(dto.LongitudeDegrees);
     }
+
+    [Fact]
+    public void ANeighbourhoodIsTheBlockAroundItsCentre()
+    {
+        var state = Create();
+
+        // Row 5, column 10 of a 32 by 16 grid: away from both poles and both edges.
+        var block = SpectatorMapper.ToNeighbourhood(state, (5 * 32) + 10, 1);
+
+        Assert.NotNull(block);
+        Assert.Equal(NeighbourhoodDto.CurrentSchema, block!.Schema);
+        Assert.Equal(3, block.Rows);
+        Assert.Equal(3, block.Columns);
+        Assert.Equal(9, block.Cells.Length);
+        Assert.Equal((5 * 32) + 10, block.CenterCellIndex);
+
+        // Row-major, so the middle of a three-by-three block is the centre it was asked for.
+        Assert.Equal(block.CenterCellIndex, block.Cells[4].CellIndex);
+        Assert.Equal(
+            new[] { 4 * 32 + 9, 4 * 32 + 10, 4 * 32 + 11, 5 * 32 + 9, 5 * 32 + 10, 5 * 32 + 11, 6 * 32 + 9, 6 * 32 + 10, 6 * 32 + 11 },
+            block.Cells.Select(c => c.CellIndex));
+    }
+
+    [Fact]
+    public void ANeighbourhoodAtThePoleIsClippedRatherThanWrapped()
+    {
+        var state = Create();
+
+        // The grid is a cylinder, not a torus: there is no row above the top one to fold onto.
+        var block = SpectatorMapper.ToNeighbourhood(state, 10, 1);
+
+        Assert.NotNull(block);
+        Assert.Equal(2, block!.Rows);
+        Assert.Equal(3, block.Columns);
+        Assert.Equal(6, block.Cells.Length);
+        Assert.All(block.Cells, cell => Assert.InRange(cell.CellIndex, 0, (state.GridWidth * 2) - 1));
+    }
+
+    [Fact]
+    public void ANeighbourhoodAcrossTheDateLineWrapsColumns()
+    {
+        var state = Create();
+        var lastColumn = state.GridWidth - 1;
+
+        var block = SpectatorMapper.ToNeighbourhood(state, 5 * state.GridWidth, 1);
+
+        Assert.NotNull(block);
+        Assert.Contains(block!.Cells, cell => cell.CellIndex == (5 * state.GridWidth) + lastColumn);
+        Assert.Equal(9, block.Cells.Length);
+        Assert.Equal(block.Cells.Length, block.Cells.Select(c => c.CellIndex).Distinct().Count());
+    }
+
+    [Fact]
+    public void ANeighbourhoodOfNoReachIsTheCentreAlone()
+    {
+        var state = Create();
+
+        var block = SpectatorMapper.ToNeighbourhood(state, 100, 0);
+
+        Assert.NotNull(block);
+        Assert.Equal(1, block!.Rows);
+        Assert.Equal(1, block.Columns);
+        Assert.Equal(100, Assert.Single(block.Cells).CellIndex);
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(512, 1)]
+    [InlineData(100, 3)]
+    [InlineData(100, -1)]
+    public void ANeighbourhoodOutsideWhatIsOfferedIsNothing(int cellIndex, int radius)
+    {
+        var state = Create();
+
+        Assert.Null(SpectatorMapper.ToNeighbourhood(state, cellIndex, radius));
+    }
+
+    [Fact]
+    public void EveryPlaceInANeighbourhoodIsTheSameProjectionAsReadingItAlone()
+    {
+        var state = Create();
+
+        var block = SpectatorMapper.ToNeighbourhood(state, (7 * 32) + 4, 2);
+
+        Assert.NotNull(block);
+        Assert.All(block!.Cells, cell =>
+            Assert.Equal(
+                CanonicalJson.Serialize(SpectatorMapper.ToCellDetail(state, cell.CellIndex)),
+                CanonicalJson.Serialize(cell)));
+    }
+
+    [Fact]
+    public void ANeighbourhoodCarriesNoWardenConfiguration()
+    {
+        var state = Create();
+
+        var json = CanonicalJson.Serialize(SpectatorMapper.ToNeighbourhood(state, 40, 2));
+
+        Assert.DoesNotContain("Secret Keeper", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("warden", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("owner", json, StringComparison.OrdinalIgnoreCase);
+    }
 }

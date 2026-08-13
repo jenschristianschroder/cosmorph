@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { SpeciesTotal } from '../api/dto'
 import type { Auth } from '../auth/useAuth'
 import {
+  adoptWorld,
   describeDraftProblem,
   fetchCharters,
   GOALS,
@@ -45,9 +46,10 @@ const EMPTY_GOALS: readonly GoalRow[] = [
 ]
 
 /**
- * Configures the Wardens of a world you own. Renders nothing to a spectator: the read is owner-only
- * and answers 404 to anyone else, so a failed read is treated as "this is not your world" rather
- * than as an error worth showing.
+ * Configures the Wardens of a world you own. Renders nothing to a signed-out spectator, because
+ * there is nothing they could do with it. To somebody signed in the read is still owner-only and
+ * answers 404 to anyone else, but silence there reads as a broken page rather than as somebody
+ * else's world — so a refusal says so plainly, and offers to adopt a world nobody owns.
  *
  * A save is accepted, not applied — the command is carried out by the tick job — so the panel says
  * the charter is pending and clears that once the world has advanced past the version it saved at.
@@ -68,6 +70,10 @@ export function WardenPanel(props: WardenPanelProps): React.ReactElement | null 
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+
+  // Bumped by a successful adoption, which is the one moment the charter read can start succeeding
+  // without the world having ticked.
+  const [ownershipVersion, setOwnershipVersion] = useState(0)
 
   // The world version at the moment of the last save. The command is pending until the world has
   // moved past it.
@@ -100,7 +106,30 @@ export function WardenPanel(props: WardenPanelProps): React.ReactElement | null 
       })
 
     return () => controller.abort()
-  }, [worldId, signedIn, token, worldVersion])
+  }, [worldId, signedIn, token, worldVersion, ownershipVersion])
+
+  const onAdopt = useCallback(async (): Promise<void> => {
+    if (!worldId) {
+      return
+    }
+    setFailure(null)
+
+    const accessToken = token()
+    if (accessToken === null) {
+      setFailure('Your session has expired. Sign in again to adopt this world.')
+      return
+    }
+
+    setBusy(true)
+    try {
+      await adoptWorld(worldId, accessToken)
+      setOwnershipVersion((version) => version + 1)
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : 'This world could not be adopted.')
+    } finally {
+      setBusy(false)
+    }
+  }, [token, worldId])
 
   const pending = savedAtVersion !== null && (worldVersion === null || worldVersion <= savedAtVersion)
 
@@ -199,8 +228,31 @@ export function WardenPanel(props: WardenPanelProps): React.ReactElement | null 
     ],
   )
 
-  if (!signedIn || charters === null) {
+  if (!signedIn) {
     return null
+  }
+
+  if (charters === null) {
+    return (
+      <section className="panel-section wardens" aria-label="Wardens">
+        <h2>Wardens</h2>
+        <p className="explanation">
+          {worldId
+            ? 'This world is not yours, so its Wardens cannot be read or configured. A world nobody owns can be adopted.'
+            : 'Choose a world to see its Wardens.'}
+        </p>
+        {failure !== null && (
+          <p className="badge badge-warning" role="alert">
+            {failure}
+          </p>
+        )}
+        {worldId && (
+          <button type="button" disabled={busy} onClick={() => void onAdopt()}>
+            {busy ? 'Adopting…' : 'Adopt this world'}
+          </button>
+        )}
+      </section>
+    )
   }
 
   return (

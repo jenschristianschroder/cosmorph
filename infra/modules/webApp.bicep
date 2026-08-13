@@ -53,6 +53,12 @@ the API accepts. Not a secret; no client secret or certificate exists.
 ''')
 param authClientId string = ''
 
+@description('''
+Lets a signed-in caller take ownership of a world that nobody owns. Ownership is never taken from an
+existing owner. Off unless an environment asks for it.
+''')
+param allowAdoptingUnownedWorlds bool = false
+
 @description('Maximum replicas. The API stays at zero minimum replicas until latency requires otherwise.')
 @minValue(1)
 @maxValue(10)
@@ -148,6 +154,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'Cosmorph__Authentication__ClientId'
               value: authClientId
+            }
+            {
+              name: 'Cosmorph__AllowAdoptingUnownedWorlds'
+              value: string(allowAdoptingUnownedWorlds)
             }
           ]
           probes: useApplicationImage ? applicationProbes : []

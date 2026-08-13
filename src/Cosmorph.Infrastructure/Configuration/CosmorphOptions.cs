@@ -66,6 +66,13 @@ public sealed class CosmorphOptions
     /// <summary>Seeds demo worlds into the in-memory store at startup.</summary>
     public bool SeedDemoWorlds { get; set; }
 
+    /// <summary>
+    /// Lets a signed-in actor take ownership of a world that nobody owns, which is how a world
+    /// created before ownership existed becomes configurable again. Off unless an environment asks
+    /// for it, and it can never take a world away from an owner: the only transition is none → you.
+    /// </summary>
+    public bool AllowAdoptingUnownedWorlds { get; set; }
+
     public SimulationOptions Simulation { get; set; } = new();
 
     /// <summary>Entra ID settings for authenticated mutations. Empty means mutations stay closed.</summary>

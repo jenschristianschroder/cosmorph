@@ -66,6 +66,12 @@ registration deliberately has no client secret or certificate.
 ''')
 param authClientId string = ''
 
+@description('''
+Lets a signed-in caller take ownership of a world that nobody owns, which is how a world created
+before ownership existed becomes configurable again. Ownership is never taken from an existing owner.
+''')
+param allowAdoptingUnownedWorlds bool = false
+
 @description('Maximum replicas for the web/API container app.')
 @minValue(1)
 @maxValue(10)
@@ -163,6 +169,7 @@ module webApp 'modules/webApp.bicep' = {
     modelDeployment: modelDeployment
     authTenantId: authTenantId
     authClientId: authClientId
+    allowAdoptingUnownedWorlds: allowAdoptingUnownedWorlds
     maxReplicas: apiMaxReplicas
   }
 }

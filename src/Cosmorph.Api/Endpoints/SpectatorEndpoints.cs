@@ -13,6 +13,7 @@ public static class SpectatorEndpoints
 {
     public const int MaxEventLimit = 200;
     private const int DefaultEventLimit = 50;
+    private const int DefaultNeighbourhoodRadius = 1;
 
     public static void MapSpectatorEndpoints(this IEndpointRouteBuilder builder)
     {
@@ -103,6 +104,45 @@ public static class SpectatorEndpoints
 
             SetCacheHeaders(context, etag);
             return Results.Ok(detail);
+        });
+
+        builder.MapGet("/api/worlds/{worldId}/cells/{cellIndex:int}/neighbourhood", async (
+            string worldId,
+            int cellIndex,
+            int? radius,
+            HttpContext context,
+            IWorldStore store,
+            CancellationToken cancellationToken) =>
+        {
+            // Validate the radius before loading anything, as the events endpoint does with its cursor.
+            var reach = radius ?? DefaultNeighbourhoodRadius;
+            if (reach < 0 || reach > NeighbourhoodDto.MaxRadius)
+            {
+                return Results.Problem(title: "Invalid radius.", statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var loaded = await LoadAsync(store, worldId, cancellationToken).ConfigureAwait(false);
+            if (loaded is not { } around)
+            {
+                return NotFound();
+            }
+
+            var (manifest, state) = around;
+            var block = SpectatorMapper.ToNeighbourhood(state, cellIndex, reach);
+            if (block is null)
+            {
+                // A centre outside the grid is answered exactly like an unknown world.
+                return NotFound();
+            }
+
+            var etag = Etag(manifest.Id, manifest.Version, string.Create(CultureInfo.InvariantCulture, $"cells{cellIndex}r{reach}"));
+            if (IsNotModified(context, etag))
+            {
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            }
+
+            SetCacheHeaders(context, etag);
+            return Results.Ok(block);
         });
 
         builder.MapGet("/api/worlds/{worldId}/events", async (

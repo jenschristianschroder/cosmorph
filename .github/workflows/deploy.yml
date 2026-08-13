@@ -86,7 +86,8 @@ jobs:
                          modelDeployment="${{ vars.COSMORPH_MODEL_DEPLOYMENT }}" \
                          modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
                          authTenantId="${{ vars.COSMORPH_AUTH_TENANT_ID }}" \
-                         authClientId="${{ vars.COSMORPH_AUTH_CLIENT_ID }}"
+                         authClientId="${{ vars.COSMORPH_AUTH_CLIENT_ID }}" \
+                         allowAdoptingUnownedWorlds=${{ vars.COSMORPH_ALLOW_ADOPTION || 'false' }}
       - name: Deploy
         id: deploy
         run: |
@@ -103,6 +104,7 @@ jobs:
                          modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
                          authTenantId="${{ vars.COSMORPH_AUTH_TENANT_ID }}" \
                          authClientId="${{ vars.COSMORPH_AUTH_CLIENT_ID }}" \
+                         allowAdoptingUnownedWorlds=${{ vars.COSMORPH_ALLOW_ADOPTION || 'false' }} \
                          useRegistryImages=false \
             --query properties.outputs -o json > outputs.json
           echo "registryLoginServer=$(jq -r '.registryLoginServer.value' outputs.json)" >> "$GITHUB_OUTPUT"
@@ -170,6 +172,7 @@ jobs:
                          modelAccountName="${{ vars.COSMORPH_MODEL_ACCOUNT }}" \
                          authTenantId="${{ vars.COSMORPH_AUTH_TENANT_ID }}" \
                          authClientId="${{ vars.COSMORPH_AUTH_CLIENT_ID }}" \
+                         allowAdoptingUnownedWorlds=${{ vars.COSMORPH_ALLOW_ADOPTION || 'false' }} \
                          useRegistryImages=true \
                          apiImage="$REGISTRY/cosmorph-api:${{ github.sha }}" \
                          tickJobImage="$REGISTRY/cosmorph-tickjob:${{ github.sha }}" \

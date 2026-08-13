@@ -18,6 +18,13 @@ export interface Uv {
   readonly v: number
 }
 
+/** A point on the unit sphere, in the mesh's own coordinates before any rotation is applied. */
+export interface Point3 {
+  readonly x: number
+  readonly y: number
+  readonly z: number
+}
+
 function cellCount(gridWidth: number, gridHeight: number): number {
   return Math.max(1, Math.trunc(gridWidth) * Math.trunc(gridHeight))
 }
@@ -57,6 +64,29 @@ export function uvToCell(u: number, v: number, gridWidth: number, gridHeight: nu
   const column = ((Math.floor(u * width) % width) + width) % width
   const row = Math.min(height - 1, Math.max(0, Math.floor((1 - v) * height)))
   return row * width + column
+}
+
+/**
+ * The point on the unit sphere carrying a uv, matching how `THREE.SphereGeometry` places its
+ * vertices: the polar angle runs from the north pole down, and `u = 0` sits at −X. Anything that
+ * needs to know where a cell *is* on screen goes through here, so the label layer and the raycaster
+ * can never drift apart.
+ */
+export function uvToPoint(u: number, v: number): Point3 {
+  const theta = (1 - v) * Math.PI
+  const phi = u * 2 * Math.PI
+  const sinTheta = Math.sin(theta)
+  return {
+    x: -Math.cos(phi) * sinTheta,
+    y: Math.cos(theta),
+    z: Math.sin(phi) * sinTheta,
+  }
+}
+
+/** The point on the unit sphere at the centre of a cell. */
+export function cellToPoint(cellIndex: number, gridWidth: number, gridHeight: number): Point3 {
+  const uv = cellToUv(cellIndex, gridWidth, gridHeight)
+  return uvToPoint(uv.u, uv.v)
 }
 
 /**

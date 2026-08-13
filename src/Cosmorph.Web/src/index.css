@@ -58,6 +58,40 @@ body,
   touch-action: none;
 }
 
+/* Live text pinned over cells. Positioned per frame by GlobeScene; never intercepts a pick. */
+.globe-labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.globe-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: none;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 0.3rem;
+  background: rgb(6 8 16 / 78%);
+  color: #f2f5ff;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 80%);
+}
+
+.globe-label span {
+  display: block;
+}
+
+.globe-label span:first-child {
+  font-weight: 600;
+}
+
 .globe-zoom {
   position: absolute;
   left: 50%;
@@ -171,9 +205,31 @@ body,
   align-self: start;
 }
 
+/*
+ * The right column is a flex column so the Warden panel keeps its place at the top and the Chronicle
+ * scrolls in a box of its own. Before this the Warden panel was the last child of one long scrolling
+ * column, which put it below sixty Chronicle entries where nobody would ever find it.
+ */
 .panel-right {
   grid-area: 2 / 3 / 3 / 4;
   width: min(20rem, 40vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.chronicle-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* The Warden panel leads the column, so it drops the rule that separates it from what sat above. */
+.panel-right > .panel-section:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
 }
 
 .panel-bottom {
@@ -366,6 +422,61 @@ select {
 
 .cell-events li {
   opacity: 0.85;
+}
+
+/*
+ * The block of places around the selected one. The column count is set inline from the payload,
+ * because the block narrows at the poles where rows are clipped.
+ */
+.neighbourhood {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+}
+
+.neighbour {
+  display: grid;
+  gap: 0.05rem;
+  padding: 0.3rem 0.35rem;
+  text-align: left;
+  background: rgba(30, 40, 66, 0.75);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.neighbour:hover,
+.neighbour:focus-visible {
+  background: rgba(48, 62, 96, 0.9);
+}
+
+.neighbour-center {
+  border-color: rgb(255 240 158 / 85%);
+  background: rgba(52, 60, 84, 0.95);
+}
+
+.neighbour-swatch {
+  display: block;
+  height: 0.28rem;
+  border-radius: 2px;
+}
+
+.neighbour-index {
+  opacity: 0.7;
+}
+
+.neighbour-life {
+  font-weight: 600;
+}
+
+.neighbour-materials,
+.neighbour-note {
+  opacity: 0.75;
 }
 
 /*

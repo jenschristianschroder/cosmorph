@@ -205,6 +205,42 @@ public sealed record CellDetailDto
     public required SpeciesAtCellDto[] Species { get; init; }
 }
 
+/// <summary>
+/// A block of places around one centre. Carries whole <see cref="CellDetailDto"/> values rather than
+/// a reduced shape, so there is one projection of a place and the browser has one parser for it.
+/// </summary>
+public sealed record NeighbourhoodDto
+{
+    public const string CurrentSchema = "spectator-neighbourhood/1";
+
+    /// <summary>The widest block offered, which at radius 2 is 25 places.</summary>
+    public const int MaxRadius = 2;
+
+    public required string Schema { get; init; }
+
+    public required string WorldId { get; init; }
+
+    public required long Tick { get; init; }
+
+    public required long Version { get; init; }
+
+    public required int CenterCellIndex { get; init; }
+
+    public required int Radius { get; init; }
+
+    /// <summary>Rows in the block, which is fewer than the radius allows near a pole.</summary>
+    public required int Rows { get; init; }
+
+    public required int Columns { get; init; }
+
+    public required int GridWidth { get; init; }
+
+    public required int GridHeight { get; init; }
+
+    /// <summary>Row-major over the block, so index <c>r * Columns + c</c> is the cell at that spot.</summary>
+    public required CellDetailDto[] Cells { get; init; }
+}
+
 /// <summary>A Chronicle entry as shown to spectators.</summary>
 public sealed record SpectatorEventDto
 {
@@ -422,6 +458,61 @@ public static class SpectatorMapper
             FibreYield = yield.Fibre,
             Construction = construction,
             Species = species,
+        };
+    }
+
+    /// <summary>
+    /// Projects the block of places around a centre. Columns wrap across the date line because the
+    /// grid is a cylinder; rows are clipped at the poles because it is not a torus. Returns null for a
+    /// centre outside the grid, so the endpoint answers it exactly like an unknown world.
+    /// </summary>
+    public static NeighbourhoodDto? ToNeighbourhood(WorldState state, int cellIndex, int radius)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (cellIndex < 0 || cellIndex >= state.Cells.Length || radius < 0 || radius > NeighbourhoodDto.MaxRadius)
+        {
+            return null;
+        }
+
+        var width = state.GridWidth;
+        var height = state.GridHeight;
+        var centerRow = cellIndex / width;
+        var centerColumn = cellIndex % width;
+
+        var firstRow = Math.Max(0, centerRow - radius);
+        var lastRow = Math.Min(height - 1, centerRow + radius);
+        var rows = lastRow - firstRow + 1;
+
+        // A grid narrower than the block would otherwise list the same column twice.
+        var columns = Math.Min(width, (radius * 2) + 1);
+        var firstColumn = centerColumn - radius;
+
+        var cells = new CellDetailDto[rows * columns];
+        for (var r = 0; r < rows; r++)
+        {
+            for (var c = 0; c < columns; c++)
+            {
+                var column = (((firstColumn + c) % width) + width) % width;
+                var index = ((firstRow + r) * width) + column;
+
+                // Non-null by construction: the row is clipped and the column wrapped into the grid.
+                cells[(r * columns) + c] = ToCellDetail(state, index)!;
+            }
+        }
+
+        return new NeighbourhoodDto
+        {
+            Schema = NeighbourhoodDto.CurrentSchema,
+            WorldId = state.Id.Value,
+            Tick = state.Tick.Value,
+            Version = state.Version,
+            CenterCellIndex = cellIndex,
+            Radius = radius,
+            Rows = rows,
+            Columns = columns,
+            GridWidth = width,
+            GridHeight = height,
+            Cells = cells,
         };
     }
 

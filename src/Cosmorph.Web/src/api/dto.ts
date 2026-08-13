@@ -11,6 +11,8 @@ export const LEGACY_SNAPSHOT_SCHEMA = 'spectator-snapshot/1'
 
 export const CELL_DETAIL_SCHEMA = 'spectator-cell/1'
 
+export const NEIGHBOURHOOD_SCHEMA = 'spectator-neighbourhood/1'
+
 export interface WorldListItem {
   readonly worldId: string
   readonly name: string
@@ -148,9 +150,27 @@ export interface CellDetail {
   readonly species: readonly SpeciesAtCell[]
 }
 
+/** A block of places around a centre, laid out row-major over `rows` × `columns`. */
+export interface Neighbourhood {
+  readonly schema: string
+  readonly worldId: string
+  readonly tick: number
+  readonly version: number
+  readonly centerCellIndex: number
+  readonly radius: number
+  readonly rows: number
+  readonly columns: number
+  readonly gridWidth: number
+  readonly gridHeight: number
+  readonly cells: readonly CellDetail[]
+}
+
 const MAX_CELLS = 1 << 16
 const MAX_EVENTS = 500
 const MAX_SPECIES_AT_CELL = 50
+
+/** The widest block the API offers is radius 2, which is 25 places. */
+const MAX_NEIGHBOURHOOD_CELLS = 25
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -350,6 +370,40 @@ export function parseCellDetail(value: unknown): CellDetail {
         droughtTolerance: num(entry.droughtTolerance, 'droughtTolerance'),
       }
     }),
+  }
+}
+
+/**
+ * Parses a block of places. The layout is checked against the cell count rather than trusted, and
+ * an oversized block is refused outright rather than truncated: a payload that does not match the
+ * grid it claims is not a block we can lay out, whatever else is in it.
+ */
+export function parseNeighbourhood(value: unknown): Neighbourhood {
+  if (!isRecord(value) || value.schema !== NEIGHBOURHOOD_SCHEMA || !Array.isArray(value.cells)) {
+    throw new Error('Unsupported neighbourhood schema.')
+  }
+
+  const rows = num(value.rows, 'rows')
+  const columns = num(value.columns, 'columns')
+  if (rows < 1 || columns < 1 || value.cells.length !== rows * columns) {
+    throw new Error('Neighbourhood layout does not match its cells.')
+  }
+  if (value.cells.length > MAX_NEIGHBOURHOOD_CELLS) {
+    throw new Error('Neighbourhood is larger than the API offers.')
+  }
+
+  return {
+    schema: str(value.schema, 'schema', 40),
+    worldId: str(value.worldId, 'worldId', 40),
+    tick: num(value.tick, 'tick'),
+    version: num(value.version, 'version'),
+    centerCellIndex: num(value.centerCellIndex, 'centerCellIndex'),
+    radius: num(value.radius, 'radius'),
+    rows,
+    columns,
+    gridWidth: num(value.gridWidth, 'gridWidth'),
+    gridHeight: num(value.gridHeight, 'gridHeight'),
+    cells: value.cells.map((entry) => parseCellDetail(entry)),
   }
 }
 

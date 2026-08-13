@@ -139,8 +139,14 @@ public sealed class AuthenticatedMutationTests : IClassFixture<AuthenticatedMuta
     }
 
     private async Task<HttpClient> CreateWorldAsync(string worldId, string objectId)
+        => await CreateWorldAsync(_factory, worldId, objectId);
+
+    private static async Task<HttpClient> CreateWorldAsync(
+        WebApplicationFactory<Program> factory,
+        string worldId,
+        string objectId)
     {
-        var client = _factory.CreateClient();
+        var client = factory.CreateClient();
         var body = $$"""{"worldId":"{{worldId}}","name":"Owned World","seed":7,"isPublic":true}""";
 
         using var response = await client.SendAsync(
@@ -148,6 +154,34 @@ public sealed class AuthenticatedMutationTests : IClassFixture<AuthenticatedMuta
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return client;
+    }
+
+    /// <summary>
+    /// A host where adoption is switched on. It is a setting rather than an environment variable so
+    /// the flag applies to this host alone and the default-off hosts keep proving the default.
+    /// </summary>
+    private WebApplicationFactory<Program> WithAdoption() =>
+        _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("Cosmorph:AllowAdoptingUnownedWorlds", "true"));
+
+    /// <summary>
+    /// Removes the owner from a world, standing in for one written before ownership existed. There is
+    /// no API that can do this, and deliberately so: the endpoint under test only ever adds an owner.
+    /// </summary>
+    private static async Task ClearOwnerAsync(WebApplicationFactory<Program> factory, string worldId)
+    {
+        var store = factory.Services.GetRequiredService<IWorldStore>();
+        var found = await store.TryGetManifestAsync(WorldId.Parse(worldId), CancellationToken.None);
+        Assert.NotNull(found);
+        Assert.True(await store.TryReplaceManifestAsync(
+            found!.Value.Manifest with { OwnerId = null }, found.Value.ConcurrencyToken, CancellationToken.None));
+    }
+
+    private static async Task<string?> OwnerOfAsync(WebApplicationFactory<Program> factory, string worldId)
+    {
+        var store = factory.Services.GetRequiredService<IWorldStore>();
+        var found = await store.TryGetManifestAsync(WorldId.Parse(worldId), CancellationToken.None);
+        return found?.Manifest.OwnerId;
     }
 
     [Fact]
@@ -409,5 +443,85 @@ public sealed class AuthenticatedMutationTests : IClassFixture<AuthenticatedMuta
         using var response = await client.GetAsync("/api/worlds/anonymous-read-world");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AWorldNobodyOwnsCanBeAdoptedAndIsThenConfigurable()
+    {
+        using var factory = WithAdoption();
+        var client = await CreateWorldAsync(factory, "adopt-world", Owner);
+        await ClearOwnerAsync(factory, "adopt-world");
+
+        // Refused before adoption, which is what makes a world written before ownership unusable.
+        using var before = await client.SendAsync(Request(
+            HttpMethod.Get, "/api/worlds/adopt-world/wardens", null, "adopt-read-1", Stranger, Scope));
+        Assert.Equal(HttpStatusCode.NotFound, before.StatusCode);
+
+        using var adopted = await client.SendAsync(Request(
+            HttpMethod.Post, "/api/worlds/adopt-world/owner", null, "adopt-1", Stranger, Scope));
+        Assert.Equal(HttpStatusCode.OK, adopted.StatusCode);
+        Assert.Equal("entra:" + Stranger, await OwnerOfAsync(factory, "adopt-world"));
+
+        using var after = await client.SendAsync(Request(
+            HttpMethod.Get, "/api/worlds/adopt-world/wardens", null, "adopt-read-2", Stranger, Scope));
+        Assert.Equal(HttpStatusCode.OK, after.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdoptingTheSameWorldTwiceIsTheSameAsAdoptingItOnce()
+    {
+        using var factory = WithAdoption();
+        var client = await CreateWorldAsync(factory, "adopt-twice-world", Owner);
+        await ClearOwnerAsync(factory, "adopt-twice-world");
+
+        using var first = await client.SendAsync(Request(
+            HttpMethod.Post, "/api/worlds/adopt-twice-world/owner", null, "adopt-twice-1", Stranger, Scope));
+        using var second = await client.SendAsync(Request(
+            HttpMethod.Post, "/api/worlds/adopt-twice-world/owner", null, "adopt-twice-2", Stranger, Scope));
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal("entra:" + Stranger, await OwnerOfAsync(factory, "adopt-twice-world"));
+    }
+
+    [Fact]
+    public async Task AWorldIsNeverTakenFromTheActorWhoOwnsIt()
+    {
+        using var factory = WithAdoption();
+        var client = await CreateWorldAsync(factory, "adopt-owned-world", Owner);
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Post, "/api/worlds/adopt-owned-world/owner", null, "adopt-owned-1", Stranger, Scope));
+
+        // 404, not 403: a stranger learns nothing about which worlds exist or who holds them.
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("entra:" + Owner, await OwnerOfAsync(factory, "adopt-owned-world"));
+    }
+
+    [Fact]
+    public async Task AdoptionIsClosedUnlessTheEnvironmentAsksForIt()
+    {
+        var client = await CreateWorldAsync("adopt-off-world", Owner);
+        await ClearOwnerAsync(_factory, "adopt-off-world");
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Post, "/api/worlds/adopt-off-world/owner", null, "adopt-off-1", Stranger, Scope));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Null(await OwnerOfAsync(_factory, "adopt-off-world"));
+    }
+
+    [Fact]
+    public async Task AdoptionIsNotReachableAnonymously()
+    {
+        using var factory = WithAdoption();
+        await CreateWorldAsync(factory, "adopt-anon-world", Owner);
+        await ClearOwnerAsync(factory, "adopt-anon-world");
+        var client = factory.CreateClient();
+
+        using var response = await client.PostAsync("/api/worlds/adopt-anon-world/owner", content: null);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Null(await OwnerOfAsync(factory, "adopt-anon-world"));
     }
 }

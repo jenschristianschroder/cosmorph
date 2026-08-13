@@ -71,6 +71,21 @@ export function biomeColor(biome: number, colorBlindMode: boolean): Rgb {
   return palette[biome] ?? FALLBACK
 }
 
+/**
+ * The palette index for a biome named rather than numbered. Cell reads carry the enum name
+ * (`BorealForest`) while the legend carries a readable one (`Boreal forest`), so both are stripped
+ * to letters before matching. A name this bundle has never heard of — which is what a newer API
+ * would send to an older browser — returns −1, and {@link biomeColor} answers that with grey.
+ */
+export function biomeIndex(name: string): number {
+  const key = lettersOnly(name)
+  return BIOME_NAMES.findIndex((entry) => lettersOnly(entry) === key)
+}
+
+function lettersOnly(name: string): string {
+  return name.replaceAll(/[^a-z]/gi, '').toLowerCase()
+}
+
 export function clampPermille(value: number): number {
   if (!Number.isFinite(value)) {
     return 0

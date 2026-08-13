@@ -10,6 +10,8 @@ import {
 } from './render/palette'
 import { cellToLatLon } from './render/texture'
 import { CellInspector } from './inspect/CellInspector'
+import { useNeighbourhood } from './inspect/useNeighbourhood'
+import { cellLabels } from './inspect/labels'
 import { WardenPanel } from './wardens/WardenPanel'
 import { MAX_REGION_CELLS } from './wardens/charters'
 import { SignInPanel } from './auth/SignInPanel'
@@ -35,6 +37,7 @@ export function App(): React.ReactElement {
   const [focus, setFocus] = useState<{ latitude: number; longitude: number } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<SpectatorEvent | null>(null)
   const [selectedCell, setSelectedCell] = useState<number | null>(null)
+  const [neighbourhoodRadius, setNeighbourhoodRadius] = useState(1)
 
   // The region being drawn for a Warden charter. It lives here rather than in the panel because the
   // globe is what paints and picks it.
@@ -126,6 +129,16 @@ export function App(): React.ReactElement {
   const snapshot = feed.snapshot
   const isFakeWorldmind = summary?.worldmindMode.toLowerCase().includes('fake') ?? false
 
+  // The one read behind both the panel and the text floating over the planet, refreshed on the same
+  // version the snapshot poll advances so the two can never disagree about what lives where.
+  const neighbourhood = useNeighbourhood(
+    worldId,
+    selectedCell,
+    neighbourhoodRadius,
+    snapshot?.version ?? null,
+  )
+  const labels = useMemo(() => cellLabels(neighbourhood.block), [neighbourhood.block])
+
   return (
     <div className="app">
       <Globe
@@ -138,6 +151,8 @@ export function App(): React.ReactElement {
         focus={focus}
         onSelectCell={onGlobePick}
         highlight={highlight}
+        selectedCell={selectedCell}
+        labels={labels}
       />
 
       <header className="panel panel-top">
@@ -229,38 +244,22 @@ export function App(): React.ReactElement {
         <p className="explanation">{overlayExplanation(overlay)}</p>
 
         <CellInspector
-          worldId={worldId}
           cellIndex={selectedCell}
           gridWidth={snapshot?.gridWidth ?? 0}
           gridHeight={snapshot?.gridHeight ?? 0}
-          version={snapshot?.version ?? null}
+          block={neighbourhood.block}
+          center={neighbourhood.center}
+          loading={neighbourhood.loading}
+          failed={neighbourhood.failed}
+          radius={neighbourhoodRadius}
+          onRadiusChange={setNeighbourhoodRadius}
+          colorBlindMode={colorBlindMode}
           events={feed.events}
           onSelectCell={onSelectCell}
         />
       </section>
 
-      <section className="panel panel-right" aria-label="Chronicle">
-        <h2>Chronicle</h2>
-        {feed.events.length === 0 && <p>No events recorded yet.</p>}
-        <ul className="chronicle">
-          {feed.events.map((event) => (
-            <li key={event.sequence}>
-              <button type="button" onClick={() => onSelectEvent(event)}>
-                <span className="chronicle-type">{event.type}</span>
-                <span className="chronicle-tick">day {event.tick.toLocaleString()}</span>
-                {event.species && <span className="chronicle-species">{event.species}</span>}
-                {event.narration && <span className="chronicle-narration">{event.narration}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-        {selectedEvent && (
-          <p className="explanation">
-            Selected: {selectedEvent.type} at day {selectedEvent.tick.toLocaleString()} with magnitude{' '}
-            {selectedEvent.magnitude}.
-          </p>
-        )}
-
+      <div className="panel panel-right">
         <WardenPanel
           auth={auth}
           worldId={worldId}
@@ -271,7 +270,30 @@ export function App(): React.ReactElement {
           onPickingChange={setPicking}
           onRegionChange={setRegion}
         />
-      </section>
+
+        <section className="chronicle-scroll" aria-label="Chronicle">
+          <h2>Chronicle</h2>
+          {feed.events.length === 0 && <p>No events recorded yet.</p>}
+          <ul className="chronicle">
+            {feed.events.map((event) => (
+              <li key={event.sequence}>
+                <button type="button" onClick={() => onSelectEvent(event)}>
+                  <span className="chronicle-type">{event.type}</span>
+                  <span className="chronicle-tick">day {event.tick.toLocaleString()}</span>
+                  {event.species && <span className="chronicle-species">{event.species}</span>}
+                  {event.narration && <span className="chronicle-narration">{event.narration}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {selectedEvent && (
+            <p className="explanation">
+              Selected: {selectedEvent.type} at day {selectedEvent.tick.toLocaleString()} with
+              magnitude {selectedEvent.magnitude}.
+            </p>
+          )}
+        </section>
+      </div>
 
       <section className="panel panel-bottom" aria-label="Legend">
         <h2>Legend</h2>
