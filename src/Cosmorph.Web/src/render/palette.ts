@@ -18,6 +18,8 @@ export const BIOME_NAMES = [
 
 export const STRESS_NAMES = ['None', 'Drought', 'Disease', 'Fire', 'Flood'] as const
 
+export const CONSTRUCTION_NAMES = ['None', 'Shelter', 'Terrace', 'Windbreak'] as const
+
 export type OverlayMode =
   | 'condition'
   | 'biome'
@@ -25,6 +27,8 @@ export type OverlayMode =
   | 'climate'
   | 'population'
   | 'recentChange'
+  | 'resources'
+  | 'constructions'
 
 export interface Rgb {
   readonly r: number
@@ -117,6 +121,17 @@ export function rampColor(permille: number, cold: Rgb, hot: Rgb): Rgb {
   }
 }
 
+/**
+ * Colours for the kinds of construction, indexed by the wire value. Kind zero is never drawn from
+ * this palette; a cell with nothing standing keeps its biome colour.
+ */
+const CONSTRUCTION_PALETTE: readonly Rgb[] = [
+  { r: 40, g: 44, b: 52 },
+  { r: 226, g: 160, b: 92 }, // Shelter
+  { r: 150, g: 200, b: 120 }, // Terrace
+  { r: 130, g: 170, b: 230 }, // Windbreak
+]
+
 export interface CellAppearanceInput {
   readonly biome: number
   readonly vitalityPermille: number
@@ -125,6 +140,8 @@ export interface CellAppearanceInput {
   readonly temperatureDeciC: number
   readonly moisturePermille: number
   readonly populationPressurePermille: number
+  readonly resourceRichnessPermille: number
+  readonly constructionKind: number
   readonly changePermille: number
 }
 
@@ -159,6 +176,23 @@ export function cellAppearance(
         ),
         pattern: 0,
       }
+    case 'resources':
+      return {
+        color: rampColor(
+          cell.resourceRichnessPermille,
+          { r: 38, g: 34, b: 30 },
+          { r: 214, g: 176, b: 96 },
+        ),
+        pattern: 0,
+      }
+    case 'constructions': {
+      const kind = Math.trunc(cell.constructionKind)
+      if (kind <= 0) {
+        // Nothing built here, so the cell keeps a muted version of its own terrain.
+        return { color: applyVitality(base, 200), pattern: 0 }
+      }
+      return { color: CONSTRUCTION_PALETTE[kind] ?? FALLBACK, pattern: 0 }
+    }
     case 'recentChange':
       return {
         color: rampColor(cell.changePermille, { r: 40, g: 44, b: 52 }, { r: 240, g: 120, b: 220 }),
@@ -202,6 +236,23 @@ export function legendFor(overlay: OverlayMode, colorBlindMode: boolean): readon
     ]
   }
 
+  if (overlay === 'constructions') {
+    return [
+      {
+        label: 'Nothing built',
+        color: applyVitality(biomeColor(4, colorBlindMode), 200),
+        pattern: 0,
+        description: 'Cells with no standing construction keep a muted terrain colour.',
+      },
+      ...CONSTRUCTION_NAMES.slice(1).map((label, index) => ({
+        label,
+        color: CONSTRUCTION_PALETTE[index + 1] ?? FALLBACK,
+        pattern: 0,
+        description: constructionDescription(label),
+      })),
+    ]
+  }
+
   const ramp = (label: string, description: string, cold: Rgb, hot: Rgb): LegendEntry[] =>
     [0, 500, 1000].map((permille) => ({
       label: `${label} ${permille / 10}%`,
@@ -225,6 +276,13 @@ export function legendFor(overlay: OverlayMode, colorBlindMode: boolean): readon
         { r: 30, g: 40, b: 60 },
         { r: 250, g: 220, b: 80 },
       )
+    case 'resources':
+      return ramp(
+        'Materials',
+        'Bright cells hold the most timber, stone and fibre.',
+        { r: 38, g: 34, b: 30 },
+        { r: 214, g: 176, b: 96 },
+      )
     case 'recentChange':
       return ramp(
         'Change',
@@ -243,6 +301,20 @@ export function legendFor(overlay: OverlayMode, colorBlindMode: boolean): readon
   }
 }
 
+/** What each kind of construction does, kept next to the palette so the legend explains itself. */
+export function constructionDescription(kind: string): string {
+  switch (kind) {
+    case 'Shelter':
+      return 'Shelters absorb part of the strain the climate puts on the species living there.'
+    case 'Terrace':
+      return 'Terraces raise how much life the cell can carry.'
+    case 'Windbreak':
+      return 'Windbreaks damp how quickly drought and flood build up.'
+    default:
+      return 'Nothing is standing on this cell.'
+  }
+}
+
 export function overlayExplanation(overlay: OverlayMode): string {
   switch (overlay) {
     case 'biome':
@@ -255,6 +327,10 @@ export function overlayExplanation(overlay: OverlayMode): string {
       return 'Colour shows how close a cell is to its carrying capacity.'
     case 'recentChange':
       return 'Colour shows how much a cell changed recently; hatching still marks dominant stress.'
+    case 'resources':
+      return 'Colour shows the combined stock of timber, stone and fibre held by each cell.'
+    case 'constructions':
+      return 'Colour marks what a Warden has built on each cell. Muted cells hold nothing.'
     case 'condition':
     default:
       return 'Hue shows biome, saturation shows vitality, and hatching redundantly marks the dominant stress.'

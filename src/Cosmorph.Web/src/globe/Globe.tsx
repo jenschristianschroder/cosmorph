@@ -12,12 +12,18 @@ export interface GlobeProps {
   readonly reducedMotion: boolean
   readonly autoRotate: boolean
   readonly focus: { readonly latitude: number; readonly longitude: number } | null
+  readonly onSelectCell?: ((cellIndex: number) => void) | undefined
+  readonly highlight?: ReadonlySet<number> | undefined
 }
 
 /** Thin React wrapper. All per-frame work happens inside GlobeScene, never in React state. */
 export function Globe(props: GlobeProps): React.ReactElement {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const sceneRef = useRef<GlobeScene | null>(null)
+
+  // Held in a ref so changing the handler never tears down and rebuilds the WebGL context.
+  const selectRef = useRef(props.onSelectCell)
+  selectRef.current = props.onSelectCell
 
   useEffect(() => {
     const container = containerRef.current
@@ -34,6 +40,7 @@ export function Globe(props: GlobeProps): React.ReactElement {
     }
 
     sceneRef.current = scene
+    scene.setPickHandler((cellIndex) => selectRef.current?.(cellIndex))
     const onResize = (): void => scene?.resize()
     globalThis.addEventListener('resize', onResize)
 
@@ -62,17 +69,43 @@ export function Globe(props: GlobeProps): React.ReactElement {
     }
 
     scene.updateState(
-      buildTextureData(snapshot, props.previousSnapshot, props.overlay, props.colorBlindMode),
+      buildTextureData(
+        snapshot,
+        props.previousSnapshot,
+        props.overlay,
+        props.colorBlindMode,
+        props.highlight,
+      ),
       snapshot.gridWidth,
       snapshot.gridHeight,
     )
-  }, [props.snapshot, props.previousSnapshot, props.overlay, props.colorBlindMode])
+  }, [
+    props.snapshot,
+    props.previousSnapshot,
+    props.overlay,
+    props.colorBlindMode,
+    props.highlight,
+  ])
 
   useEffect(() => {
     if (props.focus) {
-      sceneRef.current?.lookAtLocation(props.focus.latitude, props.focus.longitude)
+      sceneRef.current?.lookAtLocation(props.focus.latitude, props.focus.longitude, true)
     }
   }, [props.focus])
 
-  return <div className="globe" ref={containerRef} aria-hidden="true" />
+  return (
+    <div className="globe-shell">
+      <div className="globe" ref={containerRef} aria-hidden="true" />
+      <div className="globe-zoom">
+        <button type="button" onClick={() => sceneRef.current?.setZoom(-0.4)}>
+          <span aria-hidden="true">+</span>
+          <span className="visually-hidden">Zoom in</span>
+        </button>
+        <button type="button" onClick={() => sceneRef.current?.setZoom(0.4)}>
+          <span aria-hidden="true">−</span>
+          <span className="visually-hidden">Zoom out</span>
+        </button>
+      </div>
+    </div>
+  )
 }

@@ -9,6 +9,9 @@ import {
   type OverlayMode,
 } from './render/palette'
 import { cellToLatLon } from './render/texture'
+import { CellInspector } from './inspect/CellInspector'
+import { WardenPanel } from './wardens/WardenPanel'
+import { MAX_REGION_CELLS } from './wardens/charters'
 import { SignInPanel } from './auth/SignInPanel'
 import { useAuth } from './auth/useAuth'
 import type { SpectatorEvent } from './api/dto'
@@ -19,6 +22,8 @@ const OVERLAYS: readonly { readonly id: OverlayMode; readonly label: string }[] 
   { id: 'vitality', label: 'Vitality' },
   { id: 'climate', label: 'Climate' },
   { id: 'population', label: 'Population pressure' },
+  { id: 'resources', label: 'Materials' },
+  { id: 'constructions', label: 'Constructions' },
   { id: 'recentChange', label: 'Recent change' },
 ]
 
@@ -29,6 +34,12 @@ export function App(): React.ReactElement {
   const [tourPlaying, setTourPlaying] = useState(true)
   const [focus, setFocus] = useState<{ latitude: number; longitude: number } | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<SpectatorEvent | null>(null)
+  const [selectedCell, setSelectedCell] = useState<number | null>(null)
+
+  // The region being drawn for a Warden charter. It lives here rather than in the panel because the
+  // globe is what paints and picks it.
+  const [region, setRegion] = useState<readonly number[]>([])
+  const [picking, setPicking] = useState(false)
 
   // Bumped when this browser creates a world, which is the only moment the list can have changed
   // for us before the next poll would notice.
@@ -49,6 +60,14 @@ export function App(): React.ReactElement {
     }
   }, [feed.worlds, worldId])
 
+  // A cell index means nothing in another world, so a change of world clears what was selected.
+  useEffect(() => {
+    setSelectedCell(null)
+    setSelectedEvent(null)
+    setRegion([])
+    setPicking(false)
+  }, [worldId])
+
   const legend = useMemo(() => legendFor(overlay, colorBlindMode), [overlay, colorBlindMode])
 
   const onSelectEvent = useCallback(
@@ -56,11 +75,52 @@ export function App(): React.ReactElement {
       setSelectedEvent(event)
       const snapshot = feed.snapshot
       if (event.cellIndex !== undefined && snapshot) {
+        setSelectedCell(event.cellIndex)
         setFocus(cellToLatLon(event.cellIndex, snapshot.gridWidth, snapshot.gridHeight))
       }
     },
     [feed.snapshot],
   )
+
+  /**
+   * Selecting a place also aims the camera at it, whether it was reached by clicking the planet, by
+   * the Chronicle, or by typing a cell number. Passing a fresh object each time is deliberate: the
+   * globe re-aims on identity, so picking the same cell twice still recentres it.
+   */
+  const onSelectCell = useCallback(
+    (cellIndex: number | null) => {
+      setSelectedCell(cellIndex)
+      const snapshot = feed.snapshot
+      if (cellIndex !== null && snapshot) {
+        setFocus(cellToLatLon(cellIndex, snapshot.gridWidth, snapshot.gridHeight))
+      }
+    },
+    [feed.snapshot],
+  )
+
+  /**
+   * What a click on the planet does. While a charter region is being drawn a click toggles that cell
+   * instead of opening it, so the same gesture never means two things at once.
+   */
+  const onGlobePick = useCallback(
+    (cellIndex: number) => {
+      if (!picking) {
+        onSelectCell(cellIndex)
+        return
+      }
+
+      setRegion((current) => {
+        if (current.includes(cellIndex)) {
+          return current.filter((cell) => cell !== cellIndex)
+        }
+        // The API refuses a larger region, so the cap is held here rather than discovered on save.
+        return current.length >= MAX_REGION_CELLS ? current : [...current, cellIndex]
+      })
+    },
+    [picking, onSelectCell],
+  )
+
+  const highlight = useMemo(() => new Set(region), [region])
 
   const summary = feed.summary
   const snapshot = feed.snapshot
@@ -76,6 +136,8 @@ export function App(): React.ReactElement {
         reducedMotion={reducedMotion}
         autoRotate={tourPlaying && !reducedMotion}
         focus={focus}
+        onSelectCell={onGlobePick}
+        highlight={highlight}
       />
 
       <header className="panel panel-top">
@@ -165,6 +227,16 @@ export function App(): React.ReactElement {
         </button>
 
         <p className="explanation">{overlayExplanation(overlay)}</p>
+
+        <CellInspector
+          worldId={worldId}
+          cellIndex={selectedCell}
+          gridWidth={snapshot?.gridWidth ?? 0}
+          gridHeight={snapshot?.gridHeight ?? 0}
+          version={snapshot?.version ?? null}
+          events={feed.events}
+          onSelectCell={onSelectCell}
+        />
       </section>
 
       <section className="panel panel-right" aria-label="Chronicle">
@@ -188,6 +260,17 @@ export function App(): React.ReactElement {
             {selectedEvent.magnitude}.
           </p>
         )}
+
+        <WardenPanel
+          auth={auth}
+          worldId={worldId}
+          species={snapshot?.species ?? []}
+          worldVersion={snapshot?.version ?? null}
+          region={region}
+          picking={picking}
+          onPickingChange={setPicking}
+          onRegionChange={setRegion}
+        />
       </section>
 
       <section className="panel panel-bottom" aria-label="Legend">
@@ -220,6 +303,11 @@ export function App(): React.ReactElement {
         ) : (
           <p>World state is not available yet.</p>
         )}
+        <p>
+          {selectedCell === null
+            ? 'No place is selected. The Place panel takes a cell number.'
+            : `Cell ${selectedCell} is selected; the Place panel describes it.`}
+        </p>
         <ul>
           {snapshot?.species.map((species) => (
             <li key={species.species}>

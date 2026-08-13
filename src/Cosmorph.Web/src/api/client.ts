@@ -1,8 +1,10 @@
 import {
+  parseCellDetail,
   parseEventPage,
   parseSnapshot,
   parseWorldList,
   parseWorldSummary,
+  type CellDetail,
   type EventPage,
   type SpectatorSnapshot,
   type WorldList,
@@ -103,6 +105,20 @@ function assertWorldId(worldId: string): void {
   }
 }
 
+/**
+ * Reads one place. Anonymous like the rest of the spectator surface, and fetched only when a cell is
+ * selected rather than on the snapshot poll, because per-cell species would bloat every poll.
+ */
+export async function fetchCellDetail(
+  worldId: string,
+  cellIndex: number,
+  signal: AbortSignal,
+): Promise<CellDetail> {
+  assertWorldId(worldId)
+  const index = Math.max(0, Math.trunc(cellIndex))
+  return parseCellDetail(await getJson(`/api/worlds/${worldId}/cells/${index}`, signal))
+}
+
 /** The largest seed that survives a JSON round trip without losing precision. */
 export const MAX_SEED = Number.MAX_SAFE_INTEGER
 
@@ -148,22 +164,28 @@ export async function createWorld(world: NewWorld, accessToken: string): Promise
     return
   }
 
-  throw new Error(describeFailure(response.status))
+  throw new Error(describeFailure(response.status, 'The world could not be created'))
 }
 
-function describeFailure(status: number): string {
+/**
+ * Turns a failed mutation into something a person can act on. Shared with the Warden panel, so both
+ * call sites explain a rejection the same way. `subject` is a noun phrase naming what failed.
+ */
+export function describeFailure(status: number, subject: string): string {
   switch (status) {
     case 400:
-      return 'The world could not be created: check the identifier, name and seed.'
+      return `${subject}: check the values you entered.`
     case 401:
       return 'Your session has expired. Sign in again.'
     case 403:
-      return 'Your account is not permitted to create worlds.'
+      return `${subject}: your account is not permitted to do that.`
+    case 404:
+      return `${subject}: that world was not found, or it is not yours.`
     case 409:
-      return 'That world identifier is already taken.'
+      return `${subject}: that identifier is already taken.`
     case 429:
       return 'Too many requests. Try again in a minute.'
     default:
-      return `The world could not be created (status ${status}).`
+      return `${subject} (status ${status}).`
   }
 }

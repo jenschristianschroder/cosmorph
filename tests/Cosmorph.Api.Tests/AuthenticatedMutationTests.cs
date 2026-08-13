@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Cosmorph.Application.Abstractions;
 using Cosmorph.Domain.Worlds;
 using Microsoft.AspNetCore.Authentication;
@@ -253,6 +254,103 @@ public sealed class AuthenticatedMutationTests : IClassFixture<AuthenticatedMuta
         var store = _factory.Services.GetRequiredService<IWorldStore>();
         var commands = await store.ReadPendingCommandsAsync(WorldId.Parse("stranger-world"), 10, CancellationToken.None);
         Assert.Empty(commands);
+    }
+
+    [Fact]
+    public async Task AnOwnerCanReadTheChartersOfItsOwnWorld()
+    {
+        var client = await CreateWorldAsync("charter-read-world", Owner);
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Get, "/api/worlds/charter-read-world/wardens", null, "read-1", Owner, Scope));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Owner-only configuration is never held by a shared cache.
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString() ?? string.Empty, StringComparison.Ordinal);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("warden-charters/1", body.GetProperty("schema").GetString());
+        Assert.Equal("charter-read-world", body.GetProperty("worldId").GetString());
+        Assert.Equal(JsonValueKind.Array, body.GetProperty("wardens").ValueKind);
+
+        // The grid is on the response so the panel can bound a region without a second read.
+        Assert.True(body.GetProperty("gridWidth").GetInt32() > 0);
+        Assert.True(body.GetProperty("gridHeight").GetInt32() > 0);
+    }
+
+    [Fact]
+    public async Task ChartersAreNotReadableBySomebodyWhoDidNotCreateTheWorld()
+    {
+        var client = await CreateWorldAsync("charter-private-world", Owner);
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Get, "/api/worlds/charter-private-world/wardens", null, "read-2", Stranger, Scope));
+
+        // 404 rather than 403, for the same reason a charter write gives one.
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChartersAreNotReadableAnonymously()
+    {
+        await CreateWorldAsync("charter-anon-world", Owner);
+        var client = _factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/worlds/charter-anon-world/wardens");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ACharterOverAnImpossibleRegionIsRefusedRatherThanAcceptedAndDropped()
+    {
+        var client = await CreateWorldAsync("region-bound-world", Owner);
+
+        // One past the 512 cells a charter may hold, though every index is inside the 64 by 32 grid.
+        var region = string.Join(',', Enumerable.Range(0, 513));
+        var body = $$"""
+            {"displayName":"Too Wide","controlledSpecies":"verdant-moss","controlledRegion":[{{region}}],
+             "goals":["Preserve"],"goalWeights":[100],"taboos":[],
+             "actionBudget":10,"budgetRenewalPerChapter":5,"impactCeilingPerChapter":20}
+            """;
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Put,
+            "/api/worlds/region-bound-world/wardens/wide-warden/charter",
+            body,
+            "region-bound-1",
+            Owner,
+            Scope));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var store = _factory.Services.GetRequiredService<IWorldStore>();
+        var commands = await store.ReadPendingCommandsAsync(WorldId.Parse("region-bound-world"), 10, CancellationToken.None);
+        Assert.Empty(commands);
+    }
+
+    [Fact]
+    public async Task ACharterOverACellThisWorldDoesNotHaveIsRefused()
+    {
+        var client = await CreateWorldAsync("region-index-world", Owner);
+
+        // The grid is 64 by 32, so 2048 is one past its last cell.
+        var body = """
+            {"displayName":"Off Map","controlledSpecies":"verdant-moss","controlledRegion":[0,2048],
+             "goals":["Preserve"],"goalWeights":[100],"taboos":[],
+             "actionBudget":10,"budgetRenewalPerChapter":5,"impactCeilingPerChapter":20}
+            """;
+
+        using var response = await client.SendAsync(Request(
+            HttpMethod.Put,
+            "/api/worlds/region-index-world/wardens/off-map-warden/charter",
+            body,
+            "region-index-1",
+            Owner,
+            Scope));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

@@ -36,6 +36,16 @@ body,
   padding: 1rem;
 }
 
+/*
+ * The globe and its zoom buttons share a shell that fills the window behind the panels. The buttons
+ * live in the gap between the side panels so they never overlap one, and they exist because zoom
+ * must be reachable without a wheel.
+ */
+.globe-shell {
+  position: absolute;
+  inset: 0;
+}
+
 .globe {
   position: absolute;
   inset: 0;
@@ -46,6 +56,24 @@ body,
   width: 100%;
   height: 100%;
   touch-action: none;
+}
+
+.globe-zoom {
+  position: absolute;
+  left: 50%;
+  bottom: 9.5rem;
+  transform: translateX(-50%);
+  z-index: 1;
+  display: flex;
+  gap: 0.4rem;
+}
+
+.globe-zoom button {
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .panel {
@@ -139,7 +167,7 @@ body,
 
 .panel-left {
   grid-area: 2 / 1 / 3 / 2;
-  width: min(17rem, 40vw);
+  width: min(20rem, 40vw);
   align-self: start;
 }
 
@@ -285,6 +313,137 @@ select {
 .explanation {
   font-size: 0.78rem;
   opacity: 0.85;
+}
+
+/* A second block inside a panel, ruled off from what sits above it. */
+.panel-section {
+  border-top: 1px solid var(--border);
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+}
+
+.inspector h3 {
+  font-size: 0.82rem;
+  margin: 0.6rem 0 0.3rem;
+  opacity: 0.8;
+}
+
+.inspector input[type='number'] {
+  background: rgba(30, 40, 66, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+  width: 5.5rem;
+}
+
+.cell-species,
+.cell-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+}
+
+.cell-species li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 0.5rem;
+}
+
+.cell-species-name {
+  font-weight: 600;
+}
+
+.cell-species-traits {
+  grid-column: 1 / 3;
+  opacity: 0.75;
+  font-size: 0.75rem;
+}
+
+.cell-events li {
+  opacity: 0.85;
+}
+
+/*
+ * The Warden panel. Only the owner of a world ever sees it, so it sits beneath the Chronicle rather
+ * than taking a column of its own that would be empty for every spectator.
+ */
+.warden-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.warden-list button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 0.1rem;
+  font-size: 0.8rem;
+}
+
+.warden-name {
+  font-weight: 600;
+}
+
+.warden-detail {
+  opacity: 0.75;
+  font-size: 0.75rem;
+}
+
+.warden-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+
+.warden-form label {
+  margin: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.warden-form .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.warden-form input {
+  background: rgba(30, 40, 66, 0.9);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.25rem 0.4rem;
+  font: inherit;
+  width: 100%;
+}
+
+.warden-form .checkbox input {
+  width: auto;
+}
+
+.warden-form fieldset {
+  margin: 0;
+}
+
+/* A goal is a pair: what to pursue, and how hard. They stay on one line so the pairing reads. */
+.warden-goal {
+  display: grid;
+  grid-template-columns: 1fr 5rem;
+  gap: 0.35rem;
+  margin-bottom: 0.3rem;
+}
+
+.warden-form fieldset button {
+  margin-right: 0.35rem;
+  font-size: 0.78rem;
 }
 
 .visually-hidden {

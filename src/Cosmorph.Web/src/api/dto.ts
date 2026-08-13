@@ -1,6 +1,15 @@
 /** Versioned spectator DTOs. Everything crossing the network boundary is validated before use. */
 
-export const SNAPSHOT_SCHEMA = 'spectator-snapshot/1'
+export const SNAPSHOT_SCHEMA = 'spectator-snapshot/2'
+
+/**
+ * The schema written before materials and constructions existed. Still accepted, so a browser
+ * holding a cached older bundle — or an API revision mid-rollout — degrades rather than reporting
+ * the data unreadable.
+ */
+export const LEGACY_SNAPSHOT_SCHEMA = 'spectator-snapshot/1'
+
+export const CELL_DETAIL_SCHEMA = 'spectator-cell/1'
 
 export interface WorldListItem {
   readonly worldId: string
@@ -48,6 +57,10 @@ export interface SpectatorCells {
   readonly temperatureDeciC: readonly number[]
   readonly moisturePermille: readonly number[]
   readonly populationPressurePermille: readonly number[]
+
+  /** Absent on a `spectator-snapshot/1` payload. */
+  readonly resourceRichnessPermille?: readonly number[]
+  readonly constructionKind?: readonly number[]
 }
 
 export interface SpectatorSnapshot {
@@ -85,8 +98,59 @@ export interface EventPage {
   readonly latestSequence: number
 }
 
+export interface SpeciesAtCell {
+  readonly species: string
+  readonly displayName: string
+  readonly archetype: string
+  readonly population: number
+  readonly healthPermille: number
+  readonly energy: number
+  readonly coldTolerance: number
+  readonly droughtTolerance: number
+}
+
+export interface CellConstruction {
+  readonly kind: string
+  readonly level: number
+  readonly conditionPermille: number
+}
+
+/** Everything a spectator may see about one place, fetched on demand rather than polled. */
+export interface CellDetail {
+  readonly schema: string
+  readonly worldId: string
+  readonly tick: number
+  readonly version: number
+  readonly cellIndex: number
+  readonly latitudeDegrees: number
+  readonly longitudeDegrees: number
+  readonly biome: string
+  readonly isLand: boolean
+  readonly elevation: number
+  readonly temperatureDeciC: number
+  readonly moisturePermille: number
+  readonly biomass: number
+  readonly carryingCapacity: number
+  readonly vitalityPermille: number
+  readonly dominantStress: string
+  readonly droughtPermille: number
+  readonly diseasePermille: number
+  readonly firePermille: number
+  readonly floodPermille: number
+  readonly timber: number
+  readonly stone: number
+  readonly fibre: number
+  readonly resourceRichnessPermille: number
+  readonly timberYield: number
+  readonly stoneYield: number
+  readonly fibreYield: number
+  readonly construction: CellConstruction | null
+  readonly species: readonly SpeciesAtCell[]
+}
+
 const MAX_CELLS = 1 << 16
 const MAX_EVENTS = 500
+const MAX_SPECIES_AT_CELL = 50
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -158,7 +222,11 @@ export function parseWorldSummary(value: unknown): WorldSummary {
 }
 
 export function parseSnapshot(value: unknown): SpectatorSnapshot {
-  if (!isRecord(value) || value.schema !== SNAPSHOT_SCHEMA || !isRecord(value.cells)) {
+  if (
+    !isRecord(value) ||
+    (value.schema !== SNAPSHOT_SCHEMA && value.schema !== LEGACY_SNAPSHOT_SCHEMA) ||
+    !isRecord(value.cells)
+  ) {
     throw new Error('Unsupported snapshot schema.')
   }
 
@@ -172,8 +240,33 @@ export function parseSnapshot(value: unknown): SpectatorSnapshot {
   const cells = value.cells
   const species = Array.isArray(value.species) ? value.species.slice(0, 50) : []
 
+  const parsed: { -readonly [K in keyof SpectatorCells]: SpectatorCells[K] } = {
+    biome: intArray(cells.biome, 'biome', count),
+    vitalityPermille: intArray(cells.vitalityPermille, 'vitalityPermille', count),
+    dominantStress: intArray(cells.dominantStress, 'dominantStress', count),
+    stressPermille: intArray(cells.stressPermille, 'stressPermille', count),
+    temperatureDeciC: intArray(cells.temperatureDeciC, 'temperatureDeciC', count),
+    moisturePermille: intArray(cells.moisturePermille, 'moisturePermille', count),
+    populationPressurePermille: intArray(
+      cells.populationPressurePermille,
+      'populationPressurePermille',
+      count,
+    ),
+  }
+
+  if (cells.resourceRichnessPermille !== undefined) {
+    parsed.resourceRichnessPermille = intArray(
+      cells.resourceRichnessPermille,
+      'resourceRichnessPermille',
+      count,
+    )
+  }
+  if (cells.constructionKind !== undefined) {
+    parsed.constructionKind = intArray(cells.constructionKind, 'constructionKind', count)
+  }
+
   return {
-    schema: SNAPSHOT_SCHEMA,
+    schema: str(value.schema, 'schema', 40),
     worldId: str(value.worldId, 'worldId', 40),
     tick: num(value.tick, 'tick'),
     version: num(value.version, 'version'),
@@ -195,19 +288,68 @@ export function parseSnapshot(value: unknown): SpectatorSnapshot {
         population: num(entry.population, 'population'),
       }
     }),
-    cells: {
-      biome: intArray(cells.biome, 'biome', count),
-      vitalityPermille: intArray(cells.vitalityPermille, 'vitalityPermille', count),
-      dominantStress: intArray(cells.dominantStress, 'dominantStress', count),
-      stressPermille: intArray(cells.stressPermille, 'stressPermille', count),
-      temperatureDeciC: intArray(cells.temperatureDeciC, 'temperatureDeciC', count),
-      moisturePermille: intArray(cells.moisturePermille, 'moisturePermille', count),
-      populationPressurePermille: intArray(
-        cells.populationPressurePermille,
-        'populationPressurePermille',
-        count,
-      ),
-    },
+    cells: parsed,
+  }
+}
+
+export function parseCellDetail(value: unknown): CellDetail {
+  if (!isRecord(value) || value.schema !== CELL_DETAIL_SCHEMA) {
+    throw new Error('Unsupported cell schema.')
+  }
+
+  const construction = value.construction
+  const species = Array.isArray(value.species) ? value.species.slice(0, MAX_SPECIES_AT_CELL) : []
+
+  return {
+    schema: str(value.schema, 'schema', 40),
+    worldId: str(value.worldId, 'worldId', 40),
+    tick: num(value.tick, 'tick'),
+    version: num(value.version, 'version'),
+    cellIndex: num(value.cellIndex, 'cellIndex'),
+    latitudeDegrees: num(value.latitudeDegrees, 'latitudeDegrees'),
+    longitudeDegrees: num(value.longitudeDegrees, 'longitudeDegrees'),
+    biome: str(value.biome, 'biome', 30),
+    isLand: value.isLand === true,
+    elevation: num(value.elevation, 'elevation'),
+    temperatureDeciC: num(value.temperatureDeciC, 'temperatureDeciC'),
+    moisturePermille: num(value.moisturePermille, 'moisturePermille'),
+    biomass: num(value.biomass, 'biomass'),
+    carryingCapacity: num(value.carryingCapacity, 'carryingCapacity'),
+    vitalityPermille: num(value.vitalityPermille, 'vitalityPermille'),
+    dominantStress: str(value.dominantStress, 'dominantStress', 30),
+    droughtPermille: num(value.droughtPermille, 'droughtPermille'),
+    diseasePermille: num(value.diseasePermille, 'diseasePermille'),
+    firePermille: num(value.firePermille, 'firePermille'),
+    floodPermille: num(value.floodPermille, 'floodPermille'),
+    timber: num(value.timber, 'timber'),
+    stone: num(value.stone, 'stone'),
+    fibre: num(value.fibre, 'fibre'),
+    resourceRichnessPermille: num(value.resourceRichnessPermille, 'resourceRichnessPermille'),
+    timberYield: num(value.timberYield, 'timberYield'),
+    stoneYield: num(value.stoneYield, 'stoneYield'),
+    fibreYield: num(value.fibreYield, 'fibreYield'),
+    construction: isRecord(construction)
+      ? {
+          kind: str(construction.kind, 'construction.kind', 30),
+          level: num(construction.level, 'construction.level'),
+          conditionPermille: num(construction.conditionPermille, 'construction.conditionPermille'),
+        }
+      : null,
+    species: species.map((entry): SpeciesAtCell => {
+      if (!isRecord(entry)) {
+        throw new Error('Invalid species entry.')
+      }
+      return {
+        species: str(entry.species, 'species', 40),
+        displayName: str(entry.displayName, 'displayName', 60),
+        archetype: str(entry.archetype, 'archetype', 20),
+        population: num(entry.population, 'population'),
+        healthPermille: num(entry.healthPermille, 'healthPermille'),
+        energy: num(entry.energy, 'energy'),
+        coldTolerance: num(entry.coldTolerance, 'coldTolerance'),
+        droughtTolerance: num(entry.droughtTolerance, 'droughtTolerance'),
+      }
+    }),
   }
 }
 

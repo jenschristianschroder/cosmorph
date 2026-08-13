@@ -1,5 +1,5 @@
 import type { SpectatorSnapshot } from '../api/dto'
-import { cellAppearance, type OverlayMode } from './palette'
+import { cellAppearance, type OverlayMode, type Rgb } from './palette'
 
 /**
  * Builds the RGBA texture bytes for the globe. Red, green and blue carry the mapped colour and
@@ -11,6 +11,7 @@ export function buildTextureData(
   previous: SpectatorSnapshot | null,
   overlay: OverlayMode,
   colorBlindMode: boolean,
+  highlight?: ReadonlySet<number> | undefined,
 ): Uint8Array {
   const count = snapshot.gridWidth * snapshot.gridHeight
   const data = new Uint8Array(count * 4)
@@ -34,32 +35,34 @@ export function buildTextureData(
         temperatureDeciC: cells.temperatureDeciC[i] ?? 0,
         moisturePermille: cells.moisturePermille[i] ?? 0,
         populationPressurePermille: cells.populationPressurePermille[i] ?? 0,
+        resourceRichnessPermille: cells.resourceRichnessPermille?.[i] ?? 0,
+        constructionKind: cells.constructionKind?.[i] ?? 0,
         changePermille: Math.min(1000, Math.abs(vitality - previousVitality) * 4),
       },
       overlay,
       colorBlindMode,
     )
 
+    // A highlighted cell is tinted toward white so a picked region reads at a glance.
+    const color = highlight?.has(i) ? tint(appearance.color) : appearance.color
+
     const offset = i * 4
-    data[offset] = appearance.color.r
-    data[offset + 1] = appearance.color.g
-    data[offset + 2] = appearance.color.b
+    data[offset] = color.r
+    data[offset + 1] = color.g
+    data[offset + 2] = color.b
     data[offset + 3] = appearance.pattern * 60
   }
 
   return data
 }
 
-/** Converts a cell index into the latitude and longitude used to aim the camera. */
-export function cellToLatLon(
-  cellIndex: number,
-  gridWidth: number,
-  gridHeight: number,
-): { latitude: number; longitude: number } {
-  const clamped = Math.min(Math.max(0, Math.trunc(cellIndex)), gridWidth * gridHeight - 1)
-  const row = Math.floor(clamped / gridWidth)
-  const column = clamped % gridWidth
-  const latitude = 90 - ((row + 0.5) * 180) / gridHeight
-  const longitude = ((column + 0.5) * 360) / gridWidth - 180
-  return { latitude, longitude }
+function tint(color: Rgb): Rgb {
+  return {
+    r: Math.round(color.r + (255 - color.r) * 0.5),
+    g: Math.round(color.g + (255 - color.g) * 0.5),
+    b: Math.round(color.b + (255 - color.b) * 0.5),
+  }
 }
+
+/** Re-exported so existing callers keep their import; the mapping itself lives in projection.ts. */
+export { cellToLatLon } from './projection'

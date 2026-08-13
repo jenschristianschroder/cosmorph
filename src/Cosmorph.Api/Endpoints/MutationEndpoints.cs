@@ -261,6 +261,7 @@ public static class MutationEndpoints
             || taboos.Count > WardenCharter.MaxTaboos
             || region.Count is 0 || region.Count > WardenCharter.MaxRegionCells
             || goals.Any(g => !Enum.IsDefined(g))
+            || goals.Distinct().Count() != goals.Count
             || taboos.Any(t => !Enum.IsDefined(t))
             || weights.Any(w => w is < 1 or > WardenCharter.MaxWeight)
             || region.Any(c => c < 0 || c >= cellCount)

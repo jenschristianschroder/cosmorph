@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { rotationForLongitude, tiltForLatitude, uvToCell } from '../render/projection'
 
 /**
  * Owns every Three.js resource for the planet. It is deliberately outside React so the animation
@@ -37,14 +38,18 @@ float hatch(vec2 uv, float pattern) {
 }
 
 void main() {
-  vec4 state = texture2D(uState, vUv);
+  // Row 0 of the uploaded data is the north pole, which lands at v = 0; the sphere puts the north
+  // pole at uv.y = 1. Flipping here rather than on the texture is deliberate: WebGL ignores
+  // UNPACK_FLIP_Y_WEBGL for ArrayBufferView uploads, so texture.flipY would have no effect.
+  vec2 grid = vec2(vUv.x, 1.0 - vUv.y);
+  vec4 state = texture2D(uState, grid);
   float pattern = floor(state.a * 255.0 / 60.0 + 0.5);
   vec3 color = state.rgb;
 
   float shade = 0.55 + 0.45 * clamp(dot(vNormal, normalize(vec3(0.6, 0.5, 0.8))), 0.0, 1.0);
   color *= shade;
 
-  float marks = hatch(vUv, pattern);
+  float marks = hatch(grid, pattern);
   color = mix(color, vec3(0.08, 0.06, 0.05), marks * 0.45);
 
   // Chunky cartoon clouds drift slowly and never hide the underlying state.
@@ -59,6 +64,14 @@ void main() {
 `
 
 export class GlobeScene {
+  /** A pointer that moved further than this, or was held longer, was a drag rather than a pick. */
+  static readonly PICK_MOVE_LIMIT_PX = 5
+  static readonly PICK_HOLD_LIMIT_MS = 400
+  static readonly MIN_DISTANCE = 1.35
+  static readonly MAX_DISTANCE = 6
+  /** How close the camera moves when a place is selected. */
+  static readonly FOCUS_DISTANCE = 1.8
+
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene: THREE.Scene
   private readonly camera: THREE.PerspectiveCamera
@@ -70,10 +83,19 @@ export class GlobeScene {
   private disposed = false
   private targetRotation = 0
   private rotation = 0
+  private targetTilt = 0
+  private targetDistance = 3.2
   private autoRotate = true
   private reducedMotion: boolean
   private pointerDown = false
   private pointerX = 0
+  private pointerStartX = 0
+  private pointerStartY = 0
+  private pointerDownAt = 0
+  private gridWidth = 64
+  private gridHeight = 32
+  private pickHandler: ((cellIndex: number) => void) | null = null
+  private readonly raycaster = new THREE.Raycaster()
   private readonly container: HTMLElement
   private readonly clock = new THREE.Clock()
 
@@ -127,6 +149,19 @@ export class GlobeScene {
     this.autoRotate = autoRotate
   }
 
+  /** Registers the handler called when a place is clicked. Pass null to stop picking. */
+  setPickHandler(handler: ((cellIndex: number) => void) | null): void {
+    this.pickHandler = handler
+  }
+
+  /** Moves the camera in or out by a step, clamped to the readable range. */
+  setZoom(delta: number): void {
+    this.targetDistance = Math.min(
+      GlobeScene.MAX_DISTANCE,
+      Math.max(GlobeScene.MIN_DISTANCE, this.targetDistance + delta),
+    )
+  }
+
   resize(): void {
     const width = Math.max(1, this.container.clientWidth)
     const height = Math.max(1, this.container.clientHeight)
@@ -153,17 +188,27 @@ export class GlobeScene {
       this.texture.image.data = data
     }
 
+    this.gridWidth = width
+    this.gridHeight = height
     this.texture.needsUpdate = true
   }
 
-  /** Rotates the planet toward a location without changing the zoom level. */
-  lookAtLocation(latitude: number, longitude: number): void {
-    this.targetRotation = -(longitude * Math.PI) / 180
-    const tilt = Math.max(-0.6, Math.min(0.6, (latitude * Math.PI) / 360))
-    this.mesh.rotation.x = this.reducedMotion ? tilt : this.mesh.rotation.x
+  /**
+   * Rotates the planet toward a location. Passing `zoom` also moves the camera in, eased in the
+   * render loop rather than snapped, so selecting a place does not jolt the view.
+   */
+  lookAtLocation(latitude: number, longitude: number, zoom = false): void {
+    this.targetRotation = rotationForLongitude(longitude)
+    this.targetTilt = tiltForLatitude(latitude)
+    if (zoom) {
+      this.targetDistance = Math.min(this.targetDistance, GlobeScene.FOCUS_DISTANCE)
+    }
+
     if (this.reducedMotion) {
       this.rotation = this.targetRotation
       this.mesh.rotation.y = this.rotation
+      this.mesh.rotation.x = this.targetTilt
+      this.camera.position.z = this.targetDistance
     }
   }
 
@@ -184,6 +229,9 @@ export class GlobeScene {
   private readonly onPointerDown = (event: PointerEvent): void => {
     this.pointerDown = true
     this.pointerX = event.clientX
+    this.pointerStartX = event.clientX
+    this.pointerStartY = event.clientY
+    this.pointerDownAt = performance.now()
   }
 
   private readonly onPointerMove = (event: PointerEvent): void => {
@@ -196,13 +244,49 @@ export class GlobeScene {
     this.targetRotation = this.rotation
   }
 
-  private readonly onPointerUp = (): void => {
+  private readonly onPointerUp = (event: PointerEvent): void => {
+    const wasDown = this.pointerDown
     this.pointerDown = false
+    if (!wasDown || !this.pickHandler) {
+      return
+    }
+
+    // Dragging the planet around must never select a place, so only a short, still press counts.
+    const moved = Math.hypot(event.clientX - this.pointerStartX, event.clientY - this.pointerStartY)
+    const held = performance.now() - this.pointerDownAt
+    if (moved >= GlobeScene.PICK_MOVE_LIMIT_PX || held >= GlobeScene.PICK_HOLD_LIMIT_MS) {
+      return
+    }
+
+    const picked = this.pick(event.clientX, event.clientY)
+    if (picked !== null) {
+      this.pickHandler(picked)
+    }
+  }
+
+  /** The cell under a client point, or null if the pointer missed the planet. */
+  private pick(clientX: number, clientY: number): number | null {
+    const bounds = this.renderer.domElement.getBoundingClientRect()
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return null
+    }
+
+    const ndc = new THREE.Vector2(
+      ((clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((clientY - bounds.top) / bounds.height) * 2 + 1,
+    )
+
+    this.raycaster.setFromCamera(ndc, this.camera)
+    const hit = this.raycaster.intersectObject(this.mesh, false)[0]
+    if (!hit?.uv) {
+      return null
+    }
+
+    return uvToCell(hit.uv.x, hit.uv.y, this.gridWidth, this.gridHeight)
   }
 
   private readonly onWheel = (event: WheelEvent): void => {
-    const next = this.camera.position.z + Math.sign(event.deltaY) * 0.15
-    this.camera.position.z = Math.min(6, Math.max(1.35, next))
+    this.setZoom(Math.sign(event.deltaY) * 0.15)
   }
 
   private readonly loop = (): void => {
@@ -216,9 +300,14 @@ export class GlobeScene {
       if (this.autoRotate && !this.pointerDown) {
         this.targetRotation += delta * 0.05
       }
-      this.rotation += (this.targetRotation - this.rotation) * Math.min(1, delta * 3)
+      const ease = Math.min(1, delta * 3)
+      this.rotation += (this.targetRotation - this.rotation) * ease
+      this.mesh.rotation.x += (this.targetTilt - this.mesh.rotation.x) * ease
+      this.camera.position.z += (this.targetDistance - this.camera.position.z) * ease
     } else {
       this.rotation = this.targetRotation
+      this.mesh.rotation.x = this.targetTilt
+      this.camera.position.z = this.targetDistance
     }
 
     this.mesh.rotation.y = this.rotation
