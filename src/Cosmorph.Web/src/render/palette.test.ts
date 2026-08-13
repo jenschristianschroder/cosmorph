@@ -19,6 +19,8 @@ const baseCell: CellAppearanceInput = {
   temperatureDeciC: 150,
   moisturePermille: 500,
   populationPressurePermille: 400,
+  resourceRichnessPermille: 300,
+  constructionKind: 1,
   changePermille: 200,
 }
 
@@ -28,6 +30,8 @@ const overlays: readonly OverlayMode[] = [
   'vitality',
   'climate',
   'population',
+  'resources',
+  'constructions',
   'recentChange',
 ]
 
@@ -73,6 +77,10 @@ describe('palette mapping', () => {
       baseCell,
       { ...baseCell, vitalityPermille: -5000, temperatureDeciC: -9000, changePermille: -1 },
       { ...baseCell, vitalityPermille: 99999, temperatureDeciC: 9000, changePermille: 99999 },
+      // A cell from a world that has not ticked under materials yet, and one with a kind this
+      // bundle has never heard of, which is what a newer API would send to an older browser.
+      { ...baseCell, resourceRichnessPermille: -1, constructionKind: 0 },
+      { ...baseCell, resourceRichnessPermille: 99999, constructionKind: 99 },
     ]
     for (const overlay of overlays) {
       for (const cell of extremes) {
