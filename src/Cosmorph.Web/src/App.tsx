@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Globe } from './globe/Globe'
 import { useWorldFeed, usePrefersReducedMotion } from './api/useWorldFeed'
+import { useWorldLife } from './api/useWorldLife'
 import {
   BIOME_NAMES,
   legendFor,
@@ -38,6 +39,10 @@ export function App(): React.ReactElement {
   const [selectedEvent, setSelectedEvent] = useState<SpectatorEvent | null>(null)
   const [selectedCell, setSelectedCell] = useState<number | null>(null)
   const [neighbourhoodRadius, setNeighbourhoodRadius] = useState(1)
+
+  // True once the camera is close enough for the planet to draw its life. The globe decides it, so
+  // React learns of it once per crossing rather than once per frame.
+  const [closeUp, setCloseUp] = useState(false)
 
   // The region being drawn for a Warden charter. It lives here rather than in the panel because the
   // globe is what paints and picks it.
@@ -139,6 +144,10 @@ export function App(): React.ReactElement {
   )
   const labels = useMemo(() => cellLabels(neighbourhood.block), [neighbourhood.block])
 
+  // What is alive on every cell, read only while the camera is close enough to show it and dropped
+  // again on the way out, so a viewer watching the whole globe never pays for it.
+  const worldLife = useWorldLife(worldId, closeUp, snapshot?.version ?? null)
+
   return (
     <div className="app">
       <Globe
@@ -153,6 +162,8 @@ export function App(): React.ReactElement {
         highlight={highlight}
         selectedCell={selectedCell}
         labels={labels}
+        life={worldLife.life}
+        onCloseUpChange={setCloseUp}
       />
 
       <header className="panel panel-top">

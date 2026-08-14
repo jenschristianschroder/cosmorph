@@ -13,6 +13,11 @@ public static class WorldGenerator
     public const int DefaultDaysPerYear = 96;
     public const int DefaultAxialTiltDegrees = 23;
 
+    /// <summary>The highest elevation still under water. Elevation itself runs from 0 to 1000.</summary>
+    public const int SeaLevel = 520;
+
+    public const int MaxElevation = 1000;
+
     public static WorldState Create(
         WorldId id,
         string name,
@@ -105,8 +110,8 @@ public static class WorldGenerator
             + Noise(seed, topology, index, 17, 0x303)) / 10;
 
         // Poles are colder and lower; taper the continents slightly toward the poles.
-        var elevation = Math.Clamp(continent - (Math.Abs(latitude) / 12), 0, 1000);
-        var isLand = elevation >= 520;
+        var elevation = Math.Clamp(continent - (Math.Abs(latitude) / 12), 0, MaxElevation);
+        var isLand = elevation >= SeaLevel;
         var humidity = Noise(seed, topology, index, 6, 0x404);
 
         var provisional = new PlanetCell(

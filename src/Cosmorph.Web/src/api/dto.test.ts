@@ -4,6 +4,7 @@ import {
   parseEventPage,
   parseNeighbourhood,
   parseSnapshot,
+  parseWorldLife,
   parseWorldList,
   parseWorldSummary,
 } from './dto'
@@ -317,5 +318,80 @@ describe('neighbourhood validation', () => {
   it('rejects a payload carrying no cells at all', () => {
     expect(() => parseNeighbourhood({ ...validNeighbourhood, cells: undefined })).toThrow()
     expect(() => parseNeighbourhood(null)).toThrow()
+  })
+})
+
+const validLife = {
+  schema: 'spectator-life/1',
+  worldId: 'demo-world',
+  tick: 5,
+  version: 2,
+  gridWidth: 2,
+  gridHeight: 2,
+  elevation: [200, 600, 700, 900],
+  biomassPermille: [0, 400, 800, 950],
+  timber: [0, 100, 200, 300],
+  stone: [0, 10, 20, 30],
+  fibre: [0, 1, 2, 3],
+  seaLevel: 520,
+  species: [
+    {
+      species: 'verdant-moss',
+      displayName: 'Verdant Moss',
+      archetype: 'Producer',
+      population: [0, 3, 7, 11],
+    },
+  ],
+}
+
+describe('the world life read', () => {
+  it('accepts a well-formed payload', () => {
+    const life = parseWorldLife(validLife)
+
+    expect(life.gridWidth).toBe(2)
+    expect(life.seaLevel).toBe(520)
+    expect(life.species[0]?.population).toEqual([0, 3, 7, 11])
+  })
+
+  it('rejects a schema it does not know how to draw', () => {
+    expect(() => parseWorldLife({ ...validLife, schema: 'spectator-life/9' })).toThrow()
+    expect(() => parseWorldLife(null)).toThrow()
+    expect(() => parseWorldLife({ ...validLife, species: undefined })).toThrow()
+  })
+
+  /*
+   * A short column would otherwise read as a world where nothing lives past a certain cell, which
+   * is worse than refusing the payload: the planet would look calmly, plausibly empty.
+   */
+  it('rejects a column that does not cover every cell', () => {
+    expect(() => parseWorldLife({ ...validLife, elevation: [1, 2, 3] })).toThrow()
+    expect(() => parseWorldLife({ ...validLife, timber: [1, 2, 3, 4, 5] })).toThrow()
+    expect(() =>
+      parseWorldLife({
+        ...validLife,
+        species: [{ ...validLife.species[0], population: [1, 2] }],
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a grid that is not a grid', () => {
+    expect(() => parseWorldLife({ ...validLife, gridWidth: 0 })).toThrow()
+    expect(() => parseWorldLife({ ...validLife, gridHeight: -2 })).toThrow()
+    expect(() => parseWorldLife({ ...validLife, gridWidth: 5000, gridHeight: 5000 })).toThrow()
+  })
+
+  it('rejects more species than the close-up has silhouettes for', () => {
+    expect(() =>
+      parseWorldLife({
+        ...validLife,
+        species: Array.from({ length: 17 }, () => validLife.species[0]),
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a column holding something that is not a number', () => {
+    expect(() => parseWorldLife({ ...validLife, stone: ['a', 'b', 'c', 'd'] })).toThrow()
+    expect(() => parseWorldLife({ ...validLife, seaLevel: 'shallow' })).toThrow()
+    expect(() => parseWorldLife({ ...validLife, species: ['verdant-moss'] })).toThrow()
   })
 })

@@ -1,6 +1,13 @@
 import { useEffect, useRef } from 'react'
-import type { SpectatorSnapshot } from '../api/dto'
+import type { SpectatorSnapshot, WorldLife } from '../api/dto'
 import { buildTextureData } from '../render/texture'
+import {
+  buildDetailTextureData,
+  createDetailBuffers,
+  detailCapacity,
+  fillDetailInstances,
+  type DetailBuffers,
+} from '../render/detail'
 import type { OverlayMode } from '../render/palette'
 import { GlobeScene, type CellLabel } from './GlobeScene'
 
@@ -18,6 +25,16 @@ export interface GlobeProps {
   readonly selectedCell?: number | null | undefined
   /** Live text pinned over cells, shown only once the camera is close enough to read it. */
   readonly labels?: readonly CellLabel[] | undefined
+  /**
+   * Told when the camera crosses into, or back out of, the range where the planet draws its life.
+   * Fired only on a change, so it costs one render per crossing and nothing per frame.
+   */
+  readonly onCloseUpChange?: ((closeUp: boolean) => void) | undefined
+  /**
+   * What is alive on every cell. Null while the camera is too far out for it to be visible, which is
+   * also when it is not being fetched.
+   */
+  readonly life?: WorldLife | null | undefined
 }
 
 /** Thin React wrapper. All per-frame work happens inside GlobeScene, never in React state. */
@@ -28,6 +45,13 @@ export function Globe(props: GlobeProps): React.ReactElement {
   // Held in a ref so changing the handler never tears down and rebuilds the WebGL context.
   const selectRef = useRef(props.onSelectCell)
   selectRef.current = props.onSelectCell
+
+  const closeUpRef = useRef(props.onCloseUpChange)
+  closeUpRef.current = props.onCloseUpChange
+
+  // What is standing on the planet, held here rather than rebuilt per poll. Dropped along with the
+  // scene's own copy whenever the close-up lets go.
+  const buffersRef = useRef<DetailBuffers | null>(null)
 
   useEffect(() => {
     const container = containerRef.current
@@ -45,6 +69,7 @@ export function Globe(props: GlobeProps): React.ReactElement {
 
     sceneRef.current = scene
     scene.setPickHandler((cellIndex) => selectRef.current?.(cellIndex))
+    scene.setCloseUpHandler((closeUp) => closeUpRef.current?.(closeUp))
     const onResize = (): void => scene?.resize()
     globalThis.addEventListener('resize', onResize)
 
@@ -90,6 +115,39 @@ export function Globe(props: GlobeProps): React.ReactElement {
     props.colorBlindMode,
     props.highlight,
   ])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    const life = props.life
+    if (!scene) {
+      return
+    }
+
+    if (!life) {
+      scene.clearDetail()
+      buffersRef.current = null
+      return
+    }
+
+    scene.updateDetail(
+      buildDetailTextureData(life, props.snapshot),
+      life.gridWidth,
+      life.gridHeight,
+      life.seaLevel,
+    )
+
+    // Allocated once and refilled in place: a tick refreshes what is standing on the planet without
+    // handing the garbage collector a megabyte of arrays every five seconds.
+    const capacity = detailCapacity(life.gridWidth * life.gridHeight)
+    let buffers = buffersRef.current
+    if (!buffers || buffers.capacity !== capacity) {
+      buffers = createDetailBuffers(capacity)
+      buffersRef.current = buffers
+    }
+
+    fillDetailInstances(buffers, life, props.snapshot, props.colorBlindMode)
+    scene.updateDetailInstances(buffers)
+  }, [props.life, props.snapshot, props.colorBlindMode])
 
   useEffect(() => {
     // Declared after the state upload so the scene already knows the grid size it is bounded by.

@@ -13,6 +13,8 @@ export const CELL_DETAIL_SCHEMA = 'spectator-cell/1'
 
 export const NEIGHBOURHOOD_SCHEMA = 'spectator-neighbourhood/1'
 
+export const LIFE_SCHEMA = 'spectator-life/1'
+
 export interface WorldListItem {
   readonly worldId: string
   readonly name: string
@@ -165,9 +167,43 @@ export interface Neighbourhood {
   readonly cells: readonly CellDetail[]
 }
 
+/** One species and where it lives, as a column over every cell of the grid. */
+export interface SpeciesColumn {
+  readonly species: string
+  readonly displayName: string
+  readonly archetype: string
+  readonly population: readonly number[]
+}
+
+/**
+ * What is alive on every cell, and what the ground is made of. Read only while the camera is close
+ * enough to draw individual creatures, and deliberately carrying nothing the snapshot already has:
+ * biome, climate, stress and constructions all reach the close-up from there.
+ */
+export interface WorldLife {
+  readonly schema: string
+  readonly worldId: string
+  readonly tick: number
+  readonly version: number
+  readonly gridWidth: number
+  readonly gridHeight: number
+  readonly elevation: readonly number[]
+  readonly biomassPermille: readonly number[]
+  readonly timber: readonly number[]
+  readonly stone: readonly number[]
+  readonly fibre: readonly number[]
+  readonly species: readonly SpeciesColumn[]
+
+  /** The elevation at which land begins, as the world that sent it defines it. */
+  readonly seaLevel: number
+}
+
 const MAX_CELLS = 1 << 16
 const MAX_EVENTS = 500
 const MAX_SPECIES_AT_CELL = 50
+
+/** One silhouette is drawn per species, so a bundle that has never heard of this many refuses. */
+const MAX_SPECIES_COLUMNS = 16
 
 /** The widest block the API offers is radius 2, which is 25 places. */
 const MAX_NEIGHBOURHOOD_CELLS = 25
@@ -404,6 +440,53 @@ export function parseNeighbourhood(value: unknown): Neighbourhood {
     gridWidth: num(value.gridWidth, 'gridWidth'),
     gridHeight: num(value.gridHeight, 'gridHeight'),
     cells: value.cells.map((entry) => parseCellDetail(entry)),
+  }
+}
+
+/**
+ * Parses what is alive on every cell. Every column is checked against the grid the payload claims,
+ * because a short column would otherwise read as an empty stretch of world and quietly draw a
+ * continent with nothing living on it rather than reporting that the read was unusable.
+ */
+export function parseWorldLife(value: unknown): WorldLife {
+  if (!isRecord(value) || value.schema !== LIFE_SCHEMA || !Array.isArray(value.species)) {
+    throw new Error('Unsupported life schema.')
+  }
+
+  const gridWidth = num(value.gridWidth, 'gridWidth')
+  const gridHeight = num(value.gridHeight, 'gridHeight')
+  const count = gridWidth * gridHeight
+  if (gridWidth <= 0 || gridHeight <= 0 || count > MAX_CELLS) {
+    throw new Error('Life grid is out of range.')
+  }
+  if (value.species.length > MAX_SPECIES_COLUMNS) {
+    throw new Error('More species than the close-up can draw.')
+  }
+
+  return {
+    schema: str(value.schema, 'schema', 40),
+    worldId: str(value.worldId, 'worldId', 40),
+    tick: num(value.tick, 'tick'),
+    version: num(value.version, 'version'),
+    gridWidth,
+    gridHeight,
+    elevation: intArray(value.elevation, 'elevation', count),
+    biomassPermille: intArray(value.biomassPermille, 'biomassPermille', count),
+    timber: intArray(value.timber, 'timber', count),
+    stone: intArray(value.stone, 'stone', count),
+    fibre: intArray(value.fibre, 'fibre', count),
+    seaLevel: num(value.seaLevel, 'seaLevel'),
+    species: value.species.map((entry): SpeciesColumn => {
+      if (!isRecord(entry)) {
+        throw new Error('Invalid species column.')
+      }
+      return {
+        species: str(entry.species, 'species', 40),
+        displayName: str(entry.displayName, 'displayName', 60),
+        archetype: str(entry.archetype, 'archetype', 20),
+        population: intArray(entry.population, 'population', count),
+      }
+    }),
   }
 }
 

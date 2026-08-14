@@ -75,6 +75,29 @@ public static class SpectatorEndpoints
             return Results.Ok(SpectatorMapper.ToSnapshot(state));
         });
 
+        builder.MapGet("/api/worlds/{worldId}/life", async (
+            string worldId,
+            HttpContext context,
+            IWorldStore store,
+            CancellationToken cancellationToken) =>
+        {
+            var loaded = await LoadAsync(store, worldId, cancellationToken).ConfigureAwait(false);
+            if (loaded is not { } living)
+            {
+                return NotFound();
+            }
+
+            var (manifest, state) = living;
+            var etag = Etag(manifest.Id, manifest.Version, "life");
+            if (IsNotModified(context, etag))
+            {
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            }
+
+            SetCacheHeaders(context, etag);
+            return Results.Ok(SpectatorMapper.ToWorldLife(state));
+        });
+
         builder.MapGet("/api/worlds/{worldId}/cells/{cellIndex:int}", async (
             string worldId,
             int cellIndex,

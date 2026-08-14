@@ -241,6 +241,67 @@ public sealed record NeighbourhoodDto
     public required CellDetailDto[] Cells { get; init; }
 }
 
+/// <summary>One species and where it lives, as a column over every cell of the grid.</summary>
+public sealed record SpeciesColumnDto
+{
+    public required string Species { get; init; }
+
+    public required string DisplayName { get; init; }
+
+    public required string Archetype { get; init; }
+
+    /// <summary>Individuals in each cell, indexed by cell. Mostly zero: nothing lives at sea.</summary>
+    public required int[] Population { get; init; }
+}
+
+/// <summary>
+/// What is alive on every cell of the world, and what the ground is made of. Read separately from the
+/// snapshot rather than folded into it, because only a viewer zoomed in far enough to see individual
+/// creatures needs it and every viewer polls the snapshot. Carries no Warden configuration.
+/// </summary>
+/// <remarks>
+/// Deliberately carries nothing the snapshot already has. Biome, temperature, moisture, stress and
+/// constructions all reach the close-up from <see cref="SpectatorCells"/>, so neither read restates
+/// the other and the two can never disagree about the same cell.
+/// </remarks>
+public sealed record WorldLifeDto
+{
+    public const string CurrentSchema = "spectator-life/1";
+
+    public required string Schema { get; init; }
+
+    public required string WorldId { get; init; }
+
+    public required long Tick { get; init; }
+
+    public required long Version { get; init; }
+
+    public required int GridWidth { get; init; }
+
+    public required int GridHeight { get; init; }
+
+    /// <summary>Height of each cell, 0 to 1000, with sea level at <see cref="SeaLevel"/>.</summary>
+    public required int[] Elevation { get; init; }
+
+    /// <summary>How full each cell is of living matter, in permille of its carrying capacity.</summary>
+    public required int[] BiomassPermille { get; init; }
+
+    public required int[] Timber { get; init; }
+
+    public required int[] Stone { get; init; }
+
+    public required int[] Fibre { get; init; }
+
+    /// <summary>Ordered exactly like <see cref="SpectatorSnapshotDto.Species"/>.</summary>
+    public required SpeciesColumnDto[] Species { get; init; }
+
+    /// <summary>
+    /// The elevation at which land begins, mirroring <see cref="WorldGenerator.SeaLevel"/>. Sent so
+    /// the browser draws the coastline where the generator put it rather than where it guessed.
+    /// </summary>
+    public required int SeaLevel { get; init; }
+}
+
 /// <summary>A Chronicle entry as shown to spectators.</summary>
 public sealed record SpectatorEventDto
 {
@@ -516,8 +577,84 @@ public static class SpectatorMapper
         };
     }
 
-    public static SpectatorEventDto ToEvent(WorldEvent worldEvent, int gridWidth, int gridHeight)
+    /// <summary>
+    /// Projects what is alive on every cell, for a viewer close enough to see individual creatures.
+    /// Built in a single pass over the populations rather than by asking each cell what lives on it,
+    /// which is what <see cref="ToCellDetail"/> does and what would make this quadratic.
+    /// </summary>
+    public static WorldLifeDto ToWorldLife(WorldState state)
     {
+        ArgumentNullException.ThrowIfNull(state);
+        var count = state.Cells.Length;
+
+        var elevation = new int[count];
+        var biomass = new int[count];
+        var timber = new int[count];
+        var stone = new int[count];
+        var fibre = new int[count];
+
+        for (var i = 0; i < count; i++)
+        {
+            var cell = state.Cells[i];
+            elevation[i] = cell.Elevation;
+            biomass[i] = cell.CarryingCapacity <= 0
+                ? 0
+                : (int)Math.Clamp((long)cell.Biomass * 1000 / cell.CarryingCapacity, 0, 1000);
+            timber[i] = cell.Resources.Timber;
+            stone[i] = cell.Resources.Stone;
+            fibre[i] = cell.Resources.Fibre;
+        }
+
+        // Ordered like ToSnapshot's totals, so the browser can key an appearance off the same species
+        // identifier in both reads. Columns are found by identifier while the single pass fills them.
+        var content = state.Content;
+        var species = state.Populations
+            .Select(p => p.Species.Value)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .Select(id =>
+            {
+                var definition = content[new SpeciesId(id)];
+                return new SpeciesColumnDto
+                {
+                    Species = id,
+                    DisplayName = definition.DisplayName,
+                    Archetype = definition.Archetype.ToString(),
+                    Population = new int[count],
+                };
+            })
+            .ToArray();
+
+        var columns = species.ToDictionary(s => s.Species, s => s.Population, StringComparer.Ordinal);
+        foreach (var population in state.Populations)
+        {
+            if (population.CellIndex >= 0
+                && population.CellIndex < count
+                && columns.TryGetValue(population.Species.Value, out var column))
+            {
+                column[population.CellIndex] += population.Population;
+            }
+        }
+
+        return new WorldLifeDto
+        {
+            Schema = WorldLifeDto.CurrentSchema,
+            WorldId = state.Id.Value,
+            Tick = state.Tick.Value,
+            Version = state.Version,
+            GridWidth = state.GridWidth,
+            GridHeight = state.GridHeight,
+            Elevation = elevation,
+            BiomassPermille = biomass,
+            Timber = timber,
+            Stone = stone,
+            Fibre = fibre,
+            Species = species,
+            SeaLevel = WorldGenerator.SeaLevel,
+        };
+    }
+
+    public static SpectatorEventDto ToEvent(WorldEvent worldEvent, int gridWidth, int gridHeight)    {
         ArgumentNullException.ThrowIfNull(worldEvent);
         int? latitude = null;
         int? longitude = null;

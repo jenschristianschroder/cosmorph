@@ -4,9 +4,16 @@ import {
   biomeColor,
   BIOME_NAMES,
   cellAppearance,
+  critterColor,
+  critterKind,
+  detailKindColor,
   legendFor,
   overlayExplanation,
   stressPattern,
+  DETAIL_BUILDING,
+  DETAIL_HERBIVORE,
+  DETAIL_PREDATOR,
+  DETAIL_PRODUCER,
   type CellAppearanceInput,
   type OverlayMode,
 } from './palette'
@@ -107,5 +114,70 @@ describe('palette mapping', () => {
     const grassland = legend.find((entry) => entry.label === 'Grassland')
     expect(grassland?.color).toEqual(biomeColor(4, true))
     expect(legend.some((entry) => entry.pattern > 0)).toBe(true)
+  })
+})
+
+describe('what the close-up draws each species as', () => {
+  it('gives the three species of the season three shapes of their own', () => {
+    const kinds = [
+      critterKind('verdant-moss', 'Producer'),
+      critterKind('cliff-grazer', 'Herbivore'),
+      critterKind('ember-stalker', 'Predator'),
+    ]
+
+    expect(kinds).toEqual([DETAIL_PRODUCER, DETAIL_HERBIVORE, DETAIL_PREDATOR])
+    expect(new Set(kinds).size).toBe(3)
+  })
+
+  /*
+   * A species this bundle has never heard of is what a newer content pack sends an older browser.
+   * It is still drawn, as the shape of its archetype, rather than quietly left off the planet.
+   */
+  it('falls back to the archetype for a species it has never heard of', () => {
+    expect(critterKind('glass-lurker', 'Predator')).toBe(DETAIL_PREDATOR)
+    expect(critterKind('glass-lurker', 'herbivore')).toBe(DETAIL_HERBIVORE)
+    expect(critterKind('glass-lurker', 'symbiote')).toBe(DETAIL_PRODUCER)
+  })
+
+  it('reads the species id and the archetype whatever case they arrive in', () => {
+    expect(critterKind('Cliff-Grazer', 'HERBIVORE')).toBe(DETAIL_HERBIVORE)
+  })
+
+  it('colours the three apart, and differently again for a colour-blind viewer', () => {
+    const plain = ['verdant-moss', 'cliff-grazer', 'ember-stalker'].map((id) =>
+      critterColor(id, 'Producer', false),
+    )
+    const accessible = ['verdant-moss', 'cliff-grazer', 'ember-stalker'].map((id) =>
+      critterColor(id, 'Producer', true),
+    )
+
+    expect(new Set(plain.map((c) => `${c.r},${c.g},${c.b}`)).size).toBe(3)
+    expect(new Set(accessible.map((c) => `${c.r},${c.g},${c.b}`)).size).toBe(3)
+    for (let i = 0; i < plain.length; i++) {
+      expect(accessible[i]).not.toEqual(plain[i])
+    }
+
+    // Luminance has to separate them too, so the three still read without colour vision at all.
+    const luminance = accessible.map((c) => 0.299 * c.r + 0.587 * c.g + 0.114 * c.b)
+    for (let i = 0; i < luminance.length; i++) {
+      for (let j = i + 1; j < luminance.length; j++) {
+        expect(Math.abs(luminance[i]! - luminance[j]!)).toBeGreaterThan(30)
+      }
+    }
+  })
+
+  it('gives a colour to every silhouette, and grey to one that does not exist', () => {
+    for (let kind = DETAIL_PRODUCER; kind <= DETAIL_BUILDING; kind++) {
+      const color = detailKindColor(kind, false)
+      for (const channel of [color.r, color.g, color.b]) {
+        expect(channel).toBeGreaterThanOrEqual(0)
+        expect(channel).toBeLessThanOrEqual(255)
+      }
+    }
+
+    expect(detailKindColor(99, false)).toEqual({ r: 120, g: 120, b: 120 })
+    expect(critterColor('glass-lurker', 'Predator', false)).toEqual(
+      detailKindColor(DETAIL_PREDATOR, false),
+    )
   })
 })

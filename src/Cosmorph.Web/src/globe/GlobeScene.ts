@@ -1,5 +1,7 @@
 import * as THREE from 'three'
 import { cellToPoint, rotationForLongitude, tiltForLatitude, uvToCell } from '../render/projection'
+import type { DetailBuffers } from '../render/detail'
+import { DetailLayer } from './DetailLayer'
 
 /**
  * Owns every Three.js resource for the planet. It is deliberately outside React so the animation
@@ -29,9 +31,12 @@ void main() {
 const FRAGMENT_SHADER = `
 precision mediump float;
 uniform sampler2D uState;
+uniform sampler2D uDetail;
 uniform vec2 uGrid;
 uniform float uTime;
 uniform float uCellSnap;
+uniform float uDetailStrength;
+uniform float uSeaLevel;
 uniform vec2 uSelected;
 varying vec2 vUv;
 varying vec3 vNormal;
@@ -43,6 +48,12 @@ float hatch(vec2 uv, float pattern) {
   if (pattern < 2.5) { return step(0.75, fract(p.x * 1.7)) ; }
   if (pattern < 3.5) { return step(0.75, fract(p.x - p.y)); }
   return step(0.8, fract(p.y * 1.3));
+}
+
+// Deterministic per-speck value. Nothing here is random: the same fragment always gets the same
+// speck, so the ground does not crawl between frames.
+float speck(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
@@ -63,16 +74,89 @@ void main() {
   float shade = 0.55 + 0.45 * clamp(dot(vNormal, normalize(vec3(0.6, 0.5, 0.8))), 0.0, 1.0);
   color *= shade;
 
+  // Distance to the nearest cell border, in cell widths: zero on the border, a half at the centre.
+  vec2 within = fract(grid * uGrid);
+  float border = min(min(within.x, 1.0 - within.x), min(within.y, 1.0 - within.y));
+
+  // Everything below is the close-up: the shape of the land, what grows on it, its weather and what
+  // is eating it. All of it is scaled by uCellSnap, so the distant planet is exactly what it was.
+  float detailAmount = uCellSnap * uDetailStrength;
+  if (detailAmount > 0.002) {
+    vec2 texel = 1.0 / uGrid;
+    vec4 detail = texture2D(uDetail, sampleUv);
+    float elevation = detail.r;
+    float biomass = detail.g;
+    float climate = floor(detail.b * 255.0 + 0.5);
+    float stressByte = floor(detail.a * 255.0 + 0.5);
+    float land = step(uSeaLevel, elevation);
+
+    // Relief. Four taps at the neighbouring cell centres give a slope, lit from the upper left, so
+    // a ridge catches the light on one side and falls into shadow on the other.
+    float east = texture2D(uDetail, sampleUv + vec2(texel.x, 0.0)).r;
+    float west = texture2D(uDetail, sampleUv - vec2(texel.x, 0.0)).r;
+    float north = texture2D(uDetail, sampleUv + vec2(0.0, texel.y)).r;
+    float south = texture2D(uDetail, sampleUv - vec2(0.0, texel.y)).r;
+    float lit = 1.0 + ((west - east) + (north - south)) * 2.6;
+    color *= mix(1.0, clamp(lit, 0.45, 1.65), detailAmount);
+
+    // A pale shore wherever a land cell meets water, so the coastline is a thing you can see rather
+    // than only a change of colour.
+    float wettest = min(min(east, west), min(north, south));
+    float coast = land * (1.0 - step(uSeaLevel, wettest));
+    float shore = coast * (1.0 - smoothstep(0.02, 0.18, border));
+    color = mix(color, vec3(0.93, 0.90, 0.76), shore * detailAmount * 0.55);
+
+    vec2 speckId = floor(grid * uGrid * 14.0);
+    float grain = speck(speckId);
+
+    // Ground cover: a full cell is thick with growth, a spent one is bare dirt.
+    float cover = step(1.0 - biomass * 0.92, grain) * land;
+    color = mix(color, color * vec3(0.62, 0.92, 0.52), cover * detailAmount * 0.40);
+
+    // Climate, unpacked from the byte the browser packed: 21 temperature bands by 12 of moisture.
+    float temperatureStep = floor(climate / 12.0);
+    float warmth = temperatureStep / 20.0;
+    float wet = (climate - temperatureStep * 12.0) / 11.0;
+
+    float frost = smoothstep(0.46, 0.16, warmth);
+    color = mix(color, vec3(0.90, 0.95, 1.0), step(0.80, speck(speckId * 1.7)) * frost * detailAmount * 0.6);
+
+    float dust = smoothstep(0.62, 0.92, warmth) * smoothstep(0.45, 0.10, wet) * land;
+    color = mix(color, vec3(0.86, 0.78, 0.58), dust * detailAmount * 0.35);
+
+    float wetness = smoothstep(0.58, 0.95, wet) * land;
+    color = mix(color, color * vec3(0.74, 0.84, 1.0), wetness * detailAmount * 0.40);
+    float rain = step(0.93, fract(speck(speckId * 2.3) + uTime * 0.35));
+    color = mix(color, vec3(0.78, 0.87, 1.0), rain * wetness * detailAmount * 0.45);
+
+    // Stress, one treatment per cause, so the four never read as the same trouble. Every animated
+    // part is driven by uTime, which the loop stops advancing under reduced motion: the effects then
+    // hold as their own still image rather than disappearing.
+    float stressKind = floor(stressByte / 51.0);
+    float bite = ((stressByte - stressKind * 51.0) / 50.0) * detailAmount * land;
+    if (stressKind > 3.5) {
+      float ripple = 0.5 + 0.5 * sin((grid.x + grid.y) * uGrid.x * 1.6 + uTime * 2.0);
+      color = mix(color, vec3(0.56, 0.73, 0.96), bite * ripple * 0.55);
+    } else if (stressKind > 2.5) {
+      float ember = step(0.90, fract(speck(speckId * 3.1) + uTime * 0.9));
+      float flicker = 0.65 + 0.35 * sin(uTime * 7.0 + grain * 6.283);
+      color = mix(color, vec3(1.0, 0.55, 0.15), bite * (0.25 + ember * 0.85) * flicker);
+    } else if (stressKind > 1.5) {
+      color = mix(color, vec3(0.56, 0.34, 0.62), bite * step(0.60, speck(speckId * 0.7)) * 0.65);
+    } else if (stressKind > 0.5) {
+      vec2 cracked = grid * uGrid * 9.0;
+      float jitter = speck(floor(cracked));
+      float crack = 1.0 - smoothstep(0.0, 0.13, abs(fract(cracked.x * 0.5 + cracked.y * 0.35 + jitter) - 0.5));
+      color = mix(color, vec3(0.34, 0.24, 0.16), bite * crack * 0.7);
+    }
+  }
+
   float marks = hatch(grid, pattern);
   color = mix(color, vec3(0.08, 0.06, 0.05), marks * 0.45);
 
   // Chunky cartoon clouds drift slowly and never hide the underlying state.
   float clouds = smoothstep(0.72, 0.95, sin(vUv.x * 22.0 + uTime * 0.05) * cos(vUv.y * 14.0 - uTime * 0.03));
   color = mix(color, vec3(1.0), clouds * 0.18);
-
-  // Distance to the nearest cell border, in cell widths: zero on the border, a half at the centre.
-  vec2 within = fract(grid * uGrid);
-  float border = min(min(within.x, 1.0 - within.x), min(within.y, 1.0 - within.y));
 
   float edge = 1.0 - smoothstep(0.008, 0.030, border);
   color = mix(color, color * 0.55, edge * uCellSnap * 0.85);
@@ -107,6 +191,11 @@ export class GlobeScene {
   static readonly DETAIL_FAR = 2.6
   static readonly DETAIL_NEAR = GlobeScene.FOCUS_DISTANCE
   static readonly LABEL_DISTANCE = 2.4
+  /**
+   * How much further out the camera must travel before the close-up lets go again. Without the gap a
+   * camera resting exactly on the threshold would turn the world life read on and off every frame.
+   */
+  static readonly CLOSE_UP_HYSTERESIS = 0.15
 
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene: THREE.Scene
@@ -115,6 +204,10 @@ export class GlobeScene {
   private readonly material: THREE.ShaderMaterial
   private readonly mesh: THREE.Mesh
   private texture: THREE.DataTexture | null = null
+  private detailTexture: THREE.DataTexture | null = null
+  /** Bound before any life has arrived, so the sampler is never left without a texture. */
+  private readonly blankDetail: THREE.DataTexture
+  private detailLayer: DetailLayer | null = null
   private frame = 0
   private disposed = false
   private targetRotation = 0
@@ -131,6 +224,8 @@ export class GlobeScene {
   private gridWidth = 64
   private gridHeight = 32
   private pickHandler: ((cellIndex: number) => void) | null = null
+  private closeUpHandler: ((closeUp: boolean) => void) | null = null
+  private closeUp = false
   private readonly raycaster = new THREE.Raycaster()
   private readonly container: HTMLElement
   private readonly clock = new THREE.Clock()
@@ -162,14 +257,19 @@ export class GlobeScene {
     this.camera.position.set(0, 0, 3.2)
 
     this.geometry = new THREE.SphereGeometry(1, 96, 64)
+    this.blankDetail = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat)
+    this.blankDetail.needsUpdate = true
     this.material = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
       uniforms: {
         uState: { value: null },
+        uDetail: { value: this.blankDetail },
         uGrid: { value: new THREE.Vector2(64, 32) },
         uTime: { value: 0 },
         uCellSnap: { value: 0 },
+        uDetailStrength: { value: 0 },
+        uSeaLevel: { value: 0.52 },
         uSelected: { value: new THREE.Vector2(-1, -1) },
       },
     })
@@ -203,6 +303,17 @@ export class GlobeScene {
   /** Registers the handler called when a place is clicked. Pass null to stop picking. */
   setPickHandler(handler: ((cellIndex: number) => void) | null): void {
     this.pickHandler = handler
+  }
+
+  /**
+   * Registers the handler told when the camera crosses into, or back out of, the range where the
+   * planet draws its life. Edge-triggered: it fires only on a change, never per frame, so the fetch
+   * it drives happens once per crossing. The current state is reported straight away, so a handler
+   * registered while already close up is not left believing the camera is far out.
+   */
+  setCloseUpHandler(handler: ((closeUp: boolean) => void) | null): void {
+    this.closeUpHandler = handler
+    handler?.(this.closeUp)
   }
 
   /** Outlines a cell on the planet, so the globe shows which place the panel is describing. */
@@ -291,6 +402,65 @@ export class GlobeScene {
   }
 
   /**
+   * Replaces the close-up texture: elevation, biomass, climate and stress, one texel per cell. Read
+   * per cell and never blended, so it is filtered nearest — a hill must not bleed into the sea.
+   */
+  updateDetail(data: Uint8Array, width: number, height: number, seaLevel: number): void {
+    if (this.disposed) {
+      return
+    }
+
+    if (
+      !this.detailTexture ||
+      this.detailTexture.image.width !== width ||
+      this.detailTexture.image.height !== height
+    ) {
+      this.detailTexture?.dispose()
+      this.detailTexture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat)
+      this.detailTexture.wrapS = THREE.RepeatWrapping
+      this.detailTexture.minFilter = THREE.NearestFilter
+      this.detailTexture.magFilter = THREE.NearestFilter
+      this.material.uniforms.uDetail!.value = this.detailTexture
+    } else {
+      this.detailTexture.image.data = data
+    }
+
+    this.detailTexture.needsUpdate = true
+    this.material.uniforms.uSeaLevel!.value = Math.min(1, Math.max(0, seaLevel / 1000))
+    this.material.uniforms.uDetailStrength!.value = 1
+  }
+
+  /**
+   * Replaces what is standing on the planet: the critters, the props for the materials a cell holds
+   * and whatever has been built there. The layer draws straight out of these buffers, so a refill
+   * followed by another call costs an upload and no copying. A different set of buffers — which only
+   * happens when the grid changes size — builds a new layer.
+   */
+  updateDetailInstances(buffers: DetailBuffers): void {
+    if (this.disposed) {
+      return
+    }
+
+    if (!this.detailLayer || this.detailLayer.buffers !== buffers) {
+      this.detailLayer?.dispose()
+      this.detailLayer = new DetailLayer(buffers)
+      this.mesh.add(this.detailLayer.mesh)
+    }
+
+    this.detailLayer.update()
+  }
+
+  /** Drops the close-up, so nothing of a world we are no longer reading is left on the planet. */
+  clearDetail(): void {
+    this.material.uniforms.uDetailStrength!.value = 0
+    this.material.uniforms.uDetail!.value = this.blankDetail
+    this.detailTexture?.dispose()
+    this.detailTexture = null
+    this.detailLayer?.dispose()
+    this.detailLayer = null
+  }
+
+  /**
    * Rotates the planet toward a location. Passing `zoom` also moves the camera in, eased in the
    * render loop rather than snapped, so selecting a place does not jolt the view.
    */
@@ -317,6 +487,9 @@ export class GlobeScene {
     this.renderer.domElement.removeEventListener('wheel', this.onWheel)
     globalThis.removeEventListener('pointerup', this.onPointerUp)
     this.texture?.dispose()
+    this.detailTexture?.dispose()
+    this.blankDetail.dispose()
+    this.detailLayer?.dispose()
     this.geometry.dispose()
     this.material.dispose()
     this.renderer.dispose()
@@ -419,12 +592,36 @@ export class GlobeScene {
       0,
       1,
     )
+
+    // The things standing on the planet grow in on the same curve the ground detail does, and share
+    // its clock, so they hold still for anyone who asked for reduced motion.
+    if (this.detailLayer) {
+      this.detailLayer.setFade(this.material.uniforms.uCellSnap!.value as number)
+      this.detailLayer.setTime(this.material.uniforms.uTime!.value as number)
+    }
+
     this.mesh.updateMatrixWorld()
     this.camera.updateMatrixWorld()
+    this.updateCloseUp(distance)
     this.positionLabels(distance)
 
     this.renderer.render(this.scene, this.camera)
     this.frame = requestAnimationFrame(this.loop)
+  }
+
+  /**
+   * Tells the handler when the camera crosses the range where the planet draws its life, letting go
+   * a little further out than it takes hold so a camera resting on the boundary cannot flap.
+   */
+  private updateCloseUp(distance: number): void {
+    const closeUp = this.closeUp
+      ? distance <= GlobeScene.DETAIL_FAR + GlobeScene.CLOSE_UP_HYSTERESIS
+      : distance <= GlobeScene.DETAIL_FAR
+
+    if (closeUp !== this.closeUp) {
+      this.closeUp = closeUp
+      this.closeUpHandler?.(closeUp)
+    }
   }
 
   /**

@@ -351,3 +351,87 @@ export function overlayExplanation(overlay: OverlayMode): string {
       return 'Hue shows biome, saturation shows vitality, and hatching redundantly marks the dominant stress.'
   }
 }
+
+/**
+ * The silhouettes the close-up draws, as the fragment shader of the detail layer numbers them. Three
+ * shapes for the living things and four for what is standing on the ground.
+ */
+export const DETAIL_PRODUCER = 0
+export const DETAIL_HERBIVORE = 1
+export const DETAIL_PREDATOR = 2
+export const DETAIL_CONIFER = 3
+export const DETAIL_BOULDER = 4
+export const DETAIL_TUFT = 5
+export const DETAIL_BUILDING = 6
+
+/** Season 1's three species, each with a shape of its own. */
+const SPECIES_KINDS: Readonly<Record<string, number>> = {
+  'verdant-moss': DETAIL_PRODUCER,
+  'cliff-grazer': DETAIL_HERBIVORE,
+  'ember-stalker': DETAIL_PREDATOR,
+}
+
+const ARCHETYPE_KINDS: Readonly<Record<string, number>> = {
+  producer: DETAIL_PRODUCER,
+  herbivore: DETAIL_HERBIVORE,
+  predator: DETAIL_PREDATOR,
+}
+
+/**
+ * The silhouette a species is drawn with. A species this bundle has never heard of — which is what a
+ * newer content pack sends an older browser — falls back to the shape of its archetype, so it is
+ * still drawn as something recognisable rather than dropped from the planet.
+ */
+export function critterKind(speciesId: string, archetype: string): number {
+  return (
+    SPECIES_KINDS[speciesId.toLowerCase()] ??
+    ARCHETYPE_KINDS[archetype.toLowerCase()] ??
+    DETAIL_PRODUCER
+  )
+}
+
+const CRITTER_PALETTE: Readonly<Record<string, Rgb>> = {
+  'verdant-moss': { r: 122, g: 198, b: 104 },
+  'cliff-grazer': { r: 232, g: 200, b: 138 },
+  'ember-stalker': { r: 214, g: 104, b: 74 },
+}
+
+/** Distinct in luminance as well as hue, so the three still separate without colour vision. */
+const CRITTER_PALETTE_ACCESSIBLE: Readonly<Record<string, Rgb>> = {
+  'verdant-moss': { r: 238, g: 238, b: 120 },
+  'cliff-grazer': { r: 140, g: 190, b: 230 },
+  'ember-stalker': { r: 70, g: 60, b: 70 },
+}
+
+const KIND_COLORS: readonly Rgb[] = [
+  { r: 122, g: 198, b: 104 },
+  { r: 232, g: 200, b: 138 },
+  { r: 214, g: 104, b: 74 },
+  { r: 46, g: 96, b: 66 }, // Conifer
+  { r: 148, g: 146, b: 140 }, // Boulder
+  { r: 208, g: 196, b: 124 }, // Grass tuft
+  { r: 226, g: 160, b: 92 }, // Anything built
+]
+
+const KIND_COLORS_ACCESSIBLE: readonly Rgb[] = [
+  { r: 238, g: 238, b: 120 },
+  { r: 140, g: 190, b: 230 },
+  { r: 70, g: 60, b: 70 },
+  { r: 40, g: 70, b: 100 },
+  { r: 200, g: 200, b: 200 },
+  { r: 245, g: 220, b: 150 },
+  { r: 250, g: 160, b: 60 },
+]
+
+/** The colour a species is drawn in, falling back to the colour of its silhouette. */
+export function critterColor(speciesId: string, archetype: string, colorBlindMode: boolean): Rgb {
+  const key = speciesId.toLowerCase()
+  const named = colorBlindMode ? CRITTER_PALETTE_ACCESSIBLE[key] : CRITTER_PALETTE[key]
+  return named ?? detailKindColor(critterKind(speciesId, archetype), colorBlindMode)
+}
+
+/** The colour of a silhouette, which is also what the props on the ground are drawn in. */
+export function detailKindColor(kind: number, colorBlindMode: boolean): Rgb {
+  const palette = colorBlindMode ? KIND_COLORS_ACCESSIBLE : KIND_COLORS
+  return palette[Math.trunc(kind)] ?? FALLBACK
+}

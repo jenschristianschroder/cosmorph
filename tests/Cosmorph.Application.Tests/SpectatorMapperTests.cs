@@ -246,4 +246,132 @@ public sealed class SpectatorMapperTests
         Assert.DoesNotContain("warden", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("owner", json, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void WorldLifeCarriesOneValuePerCellInEveryColumn()
+    {
+        var state = Create();
+
+        var life = SpectatorMapper.ToWorldLife(state);
+
+        var count = state.GridWidth * state.GridHeight;
+        Assert.Equal(WorldLifeDto.CurrentSchema, life.Schema);
+        Assert.Equal(count, life.Elevation.Length);
+        Assert.Equal(count, life.BiomassPermille.Length);
+        Assert.Equal(count, life.Timber.Length);
+        Assert.Equal(count, life.Stone.Length);
+        Assert.Equal(count, life.Fibre.Length);
+        Assert.All(life.Species, column => Assert.Equal(count, column.Population.Length));
+
+        // A browser that mis-scales any of these draws a planet that is not the one being simulated.
+        Assert.All(life.BiomassPermille, value => Assert.InRange(value, 0, 1000));
+        Assert.All(life.Elevation, value => Assert.InRange(value, 0, WorldGenerator.MaxElevation));
+        Assert.All(life.Timber, value => Assert.InRange(value, 0, CellResources.MaxStock));
+        Assert.All(life.Stone, value => Assert.InRange(value, 0, CellResources.MaxStock));
+        Assert.All(life.Fibre, value => Assert.InRange(value, 0, CellResources.MaxStock));
+        Assert.Equal(WorldGenerator.SeaLevel, life.SeaLevel);
+    }
+
+    [Fact]
+    public void WorldLifePutsEveryPopulationInItsOwnCellAndNowhereElse()
+    {
+        var state = Create();
+
+        var life = SpectatorMapper.ToWorldLife(state);
+
+        foreach (var column in life.Species)
+        {
+            var expected = new int[state.GridWidth * state.GridHeight];
+            foreach (var population in state.Populations.Where(p => p.Species.Value == column.Species))
+            {
+                expected[population.CellIndex] += population.Population;
+            }
+
+            Assert.Equal(expected, column.Population);
+        }
+
+        Assert.Equal(
+            state.Populations.Sum(p => (long)p.Population),
+            life.Species.Sum(c => c.Population.Sum(p => (long)p)));
+    }
+
+    [Fact]
+    public void WorldLifeListsSpeciesInTheSameOrderTheSnapshotDoes()
+    {
+        var state = Create();
+
+        var life = SpectatorMapper.ToWorldLife(state);
+        var snapshot = SpectatorMapper.ToSnapshot(state);
+
+        // The browser keys an appearance off the species identifier in both reads, so a disagreement
+        // here would give the same creature two different looks depending on which read arrived.
+        Assert.Equal(snapshot.Species.Select(s => s.Species), life.Species.Select(s => s.Species));
+        Assert.Equal(snapshot.Species.Select(s => s.DisplayName), life.Species.Select(s => s.DisplayName));
+        Assert.Equal(snapshot.Species.Select(s => s.Archetype), life.Species.Select(s => s.Archetype));
+    }
+
+    [Fact]
+    public void WorldLifeAgreesWithReadingEachPlaceOnItsOwn()
+    {
+        var state = Create();
+
+        var life = SpectatorMapper.ToWorldLife(state);
+
+        for (var index = 0; index < state.Cells.Length; index += 17)
+        {
+            var detail = SpectatorMapper.ToCellDetail(state, index)!;
+            Assert.Equal(detail.Elevation, life.Elevation[index]);
+            Assert.Equal(detail.Timber, life.Timber[index]);
+            Assert.Equal(detail.Stone, life.Stone[index]);
+            Assert.Equal(detail.Fibre, life.Fibre[index]);
+
+            foreach (var species in detail.Species)
+            {
+                var column = life.Species.Single(c => c.Species == species.Species);
+                Assert.Equal(species.Population, column.Population[index]);
+            }
+        }
+    }
+
+    [Fact]
+    public void WorldLifeReportsNoBiomassShareWhereNothingCouldGrow()
+    {
+        var state = Create();
+
+        var life = SpectatorMapper.ToWorldLife(state);
+
+        // Dividing by a carrying capacity of zero is the one way this projection could throw, and open
+        // water is where it happens, so the answer has to be a plain zero rather than an exception.
+        for (var index = 0; index < state.Cells.Length; index++)
+        {
+            if (state.Cells[index].CarryingCapacity <= 0)
+            {
+                Assert.Equal(0, life.BiomassPermille[index]);
+            }
+        }
+    }
+
+    [Fact]
+    public void AWorldWithNothingAliveHasNoSpeciesColumnsAtAll()
+    {
+        var state = Create() with { Populations = [] };
+
+        var life = SpectatorMapper.ToWorldLife(state);
+
+        Assert.Empty(life.Species);
+        Assert.Equal(state.GridWidth * state.GridHeight, life.Elevation.Length);
+    }
+
+    [Fact]
+    public void WorldLifeCarriesNoWardenConfiguration()
+    {
+        var state = Create();
+
+        var json = CanonicalJson.Serialize(SpectatorMapper.ToWorldLife(state));
+
+        Assert.DoesNotContain("Secret Keeper", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("warden", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("owner", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("taboo", json, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -2,11 +2,13 @@ import {
   parseEventPage,
   parseNeighbourhood,
   parseSnapshot,
+  parseWorldLife,
   parseWorldList,
   parseWorldSummary,
   type EventPage,
   type Neighbourhood,
   type SpectatorSnapshot,
+  type WorldLife,
   type WorldList,
   type WorldSummary,
 } from './dto'
@@ -123,6 +125,16 @@ export async function fetchNeighbourhood(
   return parseNeighbourhood(
     await getJson(`/api/worlds/${worldId}/cells/${index}/neighbourhood?radius=${reach}`, signal),
   )
+}
+
+/**
+ * Reads what is alive on every cell of a world. Whole-planet rather than per-place, so it is fetched
+ * only while the camera is close enough for individual creatures to be visible, and never on the
+ * snapshot poll: a viewer looking at the whole globe pays nothing for it.
+ */
+export async function fetchWorldLife(worldId: string, signal: AbortSignal): Promise<WorldLife> {
+  assertWorldId(worldId)
+  return parseWorldLife(await getJson(`/api/worlds/${worldId}/life`, signal))
 }
 
 /** The widest block the API will answer. A larger radius is a 400, so it is bounded here first. */

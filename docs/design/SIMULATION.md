@@ -137,6 +137,70 @@ browser rather than joining it — the block already contains the centre, and po
 doubled every read. It refetches when the snapshot version advances, so populations and materials
 keep pace with the tick without touching the selection.
 
+## What the planet shows up close
+
+Sharp tiles are still only colours. Past the same threshold that sharpens them, the planet draws the
+life of every cell facing the camera: the species as critters, the materials as things standing on
+the ground, and the terrain, climate, biomass and causes of stress as the ground itself.
+
+**The life read.** `GET /api/worlds/{worldId}/life` returns `spectator-life/1`: one column per thing
+the close-up draws, each `gridWidth * gridHeight` long — `elevation`, `biomassPermille`, `timber`,
+`stone`, `fibre`, `seaLevel`, and a `species` entry per species carrying its own `population` column.
+The species are listed in the same order, and with the same ids, as the snapshot's world totals.
+
+It deliberately carries **nothing the snapshot already carries** — no biome, temperature, moisture,
+stress or construction — so the two reads can never disagree about the same cell; an API test asserts
+those field names are absent. It is not folded into the snapshot either: that is polled every five
+seconds by every viewer, including the ones looking at the whole globe. Anonymous, ETagged on the
+world version, `max-age=5`, and no Warden or owner field anywhere in it.
+
+The browser fetches it **only while the camera is close enough to draw it**. `GlobeScene` reports the
+crossing edge-triggered, taking hold at a distance of 2.6 and letting go again at 2.75 — the gap is
+there so a camera resting exactly on the threshold cannot flap the fetch on and off. `useWorldLife`
+refetches when the snapshot version advances, so the critters keep pace with the tick without a poll
+of their own, and drops its data on the way out.
+
+**The ground.** A second texture, one RGBA texel per cell, nearest-filtered because it is read per
+cell and never blended. Four bytes for five values, so two of them are packed:
+
+| Channel | Carries |
+| --- | --- |
+| R | Elevation, 0–1000 scaled to the byte. Sea level lands at 133, so the coastline is one comparison |
+| G | Biomass as a share of the cell's carrying capacity |
+| B | Climate: `temperatureStep * 12 + moistureStep`, 21 temperature bands by 12 of moisture |
+| A | Stress: `kind * 51 + round(strength / 1000 * 50)`, cause and strength riding together |
+
+Stress is read from the world state rather than from the hatch byte of the state texture, because
+that byte is zero on every overlay but Condition and Recent change — the causes of stress have to
+show whichever overlay is chosen. Everything the close-up adds is multiplied by `uCellSnap`, so the
+distant planet is pixel-for-pixel what it was before.
+
+What each one looks like: relief lit from four elevation taps with a pale shore where land meets
+water; a stipple of ground cover as thick as the biomass; frost when cold, a dusty pallor when hot
+and dry, a darker sheen and rain when wet. Then one treatment per cause of stress — **drought**
+cracks the ground, **disease** mottles it purple, **fire** flickers with embers, **flood** ripples a
+sheen over it — so the four never read as the same trouble.
+
+**The critters and props.** One `THREE.InstancedMesh` over a unit quad, billboarded in view space
+from a centre on the sphere, silhouettes cut out of it per kind in the fragment shader. Anything that
+has turned away from the camera is scaled to nothing, which is the cheapest back-face cull there is,
+and the whole layer is hidden when the fade is zero — a viewer who never zooms in pays nothing.
+
+`render/detail.ts` decides what stands where, with no WebGL and no `Math.random` in it. Per land
+cell: one critter **per individual** capped at four per species, a conifer for timber, a boulder for
+stone, a tuft for fibre — each sized by the stock, and only above a stock of 120 — and one prop for
+whatever a Warden has built. Positions come from the cell centre, offset by an integer hash of the
+cell and the slot and bounded to well inside the cell, so a thing is provably standing on the place
+whose numbers put it there, and it is still standing there when the next poll lands five seconds
+later. Buffers are allocated once at `min(32_768, cells * 16)` and refilled in place.
+
+A species this bundle has never heard of — what a newer content pack sends an older browser — is
+drawn as the silhouette of its archetype rather than dropped from the planet.
+
+**Reduced motion needs no switch of its own.** The render loop only advances `uTime` when motion is
+allowed, so the wander, the rain, the embers, the flicker and the flood ripple all freeze into their
+own still image. Nothing disappears; it simply stops moving.
+
 ## Configuring a Warden
 
 A Warden is configured by its **charter**: the species it looks after, the cells it governs, what it
